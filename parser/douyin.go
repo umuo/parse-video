@@ -170,11 +170,16 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 
 	var videoUrl string
 	if len(images) == 0 {
-		videoUrl = data.Get("video.play_addr.url_list.0").String()
-		if videoUrl == "" {
-			videoUrl = data.Get("video.bit_rate.0.play_addr.url_list.0").String()
+		videoUri := data.Get("video.play_addr.uri").String()
+		if videoUri != "" {
+			videoUrl = fmt.Sprintf("https://www.iesdouyin.com/aweme/v1/play/?video_id=%s&ratio=1080p&line=0", videoUri)
+		} else {
+			videoUrl = data.Get("video.play_addr.url_list.0").String()
+			if videoUrl == "" {
+				videoUrl = data.Get("video.bit_rate.0.play_addr.url_list.0").String()
+			}
+			videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
 		}
-		videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
 	}
 
 	// 获取音频地址
@@ -438,8 +443,9 @@ func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
 	if videoInfo.VideoUrl == "" {
 		return
 	}
-	// 如果已经是 CDN 直链，无需再跟踪重定向
-	if strings.Contains(videoInfo.VideoUrl, "zjcdn.com") ||
+	// 如果已经是重定向 API 或 CDN 直链，无需再跟踪重定向
+	if strings.Contains(videoInfo.VideoUrl, "/aweme/v1/play/") ||
+		strings.Contains(videoInfo.VideoUrl, "zjcdn.com") ||
 		strings.Contains(videoInfo.VideoUrl, "douyinvod.com") ||
 		strings.Contains(videoInfo.VideoUrl, "bytevcloud.com") ||
 		strings.Contains(videoInfo.VideoUrl, "tos-cn-") {
