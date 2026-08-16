@@ -123,11 +123,12 @@ func (b biliBili) getBvidFromURL(rawURL string) (string, error) {
 	if strings.Contains(parsedURL.Host, "b23.tv") {
 		client := newClient()
 		client.SetRedirectPolicy(resty.NoRedirectPolicy())
-		resp, err := client.R().
+		resp, _ := client.R().
 			SetHeader(HttpHeaderUserAgent, UserAgent).
 			Get(rawURL)
-		if err != nil {
-			return "", fmt.Errorf("请求b23.tv短链失败: %v", err)
+
+		if resp == nil {
+			return "", fmt.Errorf("请求b23.tv短链失败: 无响应")
 		}
 
 		location := resp.Header().Get("Location")
