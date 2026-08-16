@@ -171,16 +171,23 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 	var videoUrl string
 	var shortUrl string
 	if len(images) == 0 {
-		videoUrl = data.Get("video.play_addr.url_list.0").String()
-		if videoUrl == "" {
-			videoUrl = data.Get("video.bit_rate.0.play_addr.url_list.0").String()
-		}
-		videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
-
 		videoUri := data.Get("video.play_addr.uri").String()
 		if videoUri != "" {
 			shortUrl = fmt.Sprintf("https://www.iesdouyin.com/aweme/v1/play/?video_id=%s&ratio=1080p&line=0", videoUri)
 		}
+
+		// 优选不带 -web 的 CDN 直链（避免网页端防盗链 403）
+		videoUrl = d.pickBestVideoUrl(data.Get("video.play_addr.url_list").Array())
+		if videoUrl == "" {
+			videoUrl = d.pickBestVideoUrl(data.Get("video.bit_rate.0.play_addr.url_list").Array())
+		}
+		if videoUrl == "" && shortUrl != "" {
+			videoUrl = d.resolveRedirect(shortUrl)
+		}
+		if videoUrl == "" {
+			videoUrl = data.Get("video.play_addr.url_list.0").String()
+		}
+		videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
 	}
 
 	// 获取音频地址
@@ -450,32 +457,80 @@ func (d douYin) parseVideoIdFromPath(urlPath string) (string, error) {
 	return "", errors.New("parse video id from path fail")
 }
 
+func (d douYin) pickBestVideoUrl(urlList []gjson.Result) string {
+	// 第一优先级：不带 -web 的真实 CDN 直链（zjcdn, douyinvod, bytevcloud, tos-cn）
+	for _, u := range urlList {
+		urlStr := u.String()
+		if urlStr == "" || strings.Contains(urlStr, "-web") || strings.Contains(urlStr, "/aweme/v1/play/") {
+			continue
+		}
+		if strings.Contains(urlStr, "zjcdn.com") || strings.Contains(urlStr, "douyinvod.com") || strings.Contains(urlStr, "bytevcloud.com") || strings.Contains(urlStr, "tos-cn-") {
+			return urlStr
+		}
+	}
+	// 第二优先级：不带 -web 的任意有效非 API 链接
+	for _, u := range urlList {
+		urlStr := u.String()
+		if urlStr != "" && !strings.Contains(urlStr, "-web") && !strings.Contains(urlStr, "/aweme/v1/play/") {
+			return urlStr
+		}
+	}
+	// 第三优先级：不带 -web 的任何链接
+	for _, u := range urlList {
+		urlStr := u.String()
+		if urlStr != "" && !strings.Contains(urlStr, "-web") {
+			return urlStr
+		}
+	}
+	if len(urlList) > 0 {
+		return urlList[0].String()
+	}
+	return ""
+}
+
+func (d douYin) resolveRedirect(targetUrl string) string {
+	client := newClient()
+	client.SetRedirectPolicy(resty.NoRedirectPolicy())
+	client.SetDoNotParseResponse(true)
+	res, _ := client.R().
+		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
+		SetHeader("Range", "bytes=0-0").
+		Get(targetUrl)
+	if res != nil && res.RawResponse != nil {
+		defer res.RawResponse.Body.Close()
+		locationRes, _ := res.RawResponse.Location()
+		if locationRes != nil {
+			return locationRes.String()
+		}
+	}
+	return targetUrl
+}
+
 func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
 	if videoInfo.VideoUrl == "" {
 		return
 	}
-	// 如果已经是重定向 API 或 CDN 直链，无需再跟踪重定向
-	if strings.Contains(videoInfo.VideoUrl, "/aweme/v1/play/") ||
-		strings.Contains(videoInfo.VideoUrl, "zjcdn.com") ||
-		strings.Contains(videoInfo.VideoUrl, "douyinvod.com") ||
-		strings.Contains(videoInfo.VideoUrl, "bytevcloud.com") ||
-		strings.Contains(videoInfo.VideoUrl, "tos-cn-") {
+	// 如果已经是干净的非 -web CDN 直链，无需再跟踪重定向
+	if !strings.Contains(videoInfo.VideoUrl, "-web") &&
+		(strings.Contains(videoInfo.VideoUrl, "zjcdn.com") ||
+			strings.Contains(videoInfo.VideoUrl, "douyinvod.com") ||
+			strings.Contains(videoInfo.VideoUrl, "bytevcloud.com") ||
+			strings.Contains(videoInfo.VideoUrl, "tos-cn-")) {
 		return
 	}
 
-	client := newClient()
-	client.SetRedirectPolicy(resty.NoRedirectPolicy())
-	client.SetDoNotParseResponse(true)
-	res2, _ := client.R().
-		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
-		SetHeader("Range", "bytes=0-0").
-		Get(videoInfo.VideoUrl)
-	if res2 != nil && res2.RawResponse != nil {
-		defer res2.RawResponse.Body.Close()
-		locationRes, _ := res2.RawResponse.Location()
-		if locationRes != nil {
-			(*videoInfo).VideoUrl = locationRes.String()
+	// 如果包含 -web 或 play API，优先通过 iesdouyin 移动端 short_url 跟踪获取无防盗链 CDN 节点
+	if videoInfo.ShortUrl != "" {
+		resolved := d.resolveRedirect(videoInfo.ShortUrl)
+		if resolved != "" && !strings.Contains(resolved, "-web") {
+			videoInfo.VideoUrl = resolved
+			return
 		}
+	}
+
+	resolved := d.resolveRedirect(videoInfo.VideoUrl)
+	if resolved != "" {
+		videoInfo.VideoUrl = resolved
 	}
 }
 
