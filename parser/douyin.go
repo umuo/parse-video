@@ -169,16 +169,17 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 	}
 
 	var videoUrl string
+	var shortUrl string
 	if len(images) == 0 {
+		videoUrl = data.Get("video.play_addr.url_list.0").String()
+		if videoUrl == "" {
+			videoUrl = data.Get("video.bit_rate.0.play_addr.url_list.0").String()
+		}
+		videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
+
 		videoUri := data.Get("video.play_addr.uri").String()
 		if videoUri != "" {
-			videoUrl = fmt.Sprintf("https://www.iesdouyin.com/aweme/v1/play/?video_id=%s&ratio=1080p&line=0", videoUri)
-		} else {
-			videoUrl = data.Get("video.play_addr.url_list.0").String()
-			if videoUrl == "" {
-				videoUrl = data.Get("video.bit_rate.0.play_addr.url_list.0").String()
-			}
-			videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
+			shortUrl = fmt.Sprintf("https://www.iesdouyin.com/aweme/v1/play/?video_id=%s&ratio=1080p&line=0", videoUri)
 		}
 	}
 
@@ -191,6 +192,7 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 	// 如果是图集，置空 videoUrl
 	if len(images) > 0 {
 		videoUrl = ""
+		shortUrl = ""
 	} else {
 		musicUrl = ""
 	}
@@ -208,6 +210,7 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 	videoInfo := &VideoParseInfo{
 		Title:    data.Get("desc").String(),
 		VideoUrl: videoUrl,
+		ShortUrl: shortUrl,
 		MusicUrl: musicUrl,
 		CoverUrl: coverUrl,
 		Images:   images,
@@ -313,14 +316,21 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	}
 
 	var videoUrl string
+	var shortUrl string
 	if !isNote {
 		videoUrl = data.Get("video.play_addr.url_list.0").String()
 		videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
+
+		videoUri := data.Get("video.play_addr.uri").String()
+		if videoUri != "" {
+			shortUrl = fmt.Sprintf("https://www.iesdouyin.com/aweme/v1/play/?video_id=%s&ratio=1080p&line=0", videoUri)
+		}
 	}
 
 	musicUrl := data.Get("video.play_addr.uri").String()
 	if len(images) > 0 {
 		videoUrl = ""
+		shortUrl = ""
 	} else {
 		musicUrl = ""
 	}
@@ -331,6 +341,7 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	videoInfo := &VideoParseInfo{
 		Title:    data.Get("desc").String(),
 		VideoUrl: videoUrl,
+		ShortUrl: shortUrl,
 		MusicUrl: musicUrl,
 		CoverUrl: coverUrl,
 		Images:   images,

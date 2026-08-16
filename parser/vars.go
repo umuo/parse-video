@@ -58,11 +58,12 @@ type VideoParseInfo struct {
 		Name   string `json:"name"`   // 作者名称
 		Avatar string `json:"avatar"` // 作者头像
 	} `json:"author"`
-	Title    string    `json:"title"`     // 描述
-	VideoUrl string    `json:"video_url"` // 视频播放地址
-	MusicUrl string    `json:"music_url"` // 音乐播放地址
-	CoverUrl string    `json:"cover_url"` // 视频封面地址
-	Images   []ImgInfo `json:"images"`    // 图集图片地址列表
+	Title    string    `json:"title"`               // 描述
+	VideoUrl string    `json:"video_url"`          // 视频播放地址
+	ShortUrl string    `json:"short_url,omitempty"` // 短播放/重定向地址
+	MusicUrl string    `json:"music_url"`          // 音乐播放地址
+	CoverUrl string    `json:"cover_url"`          // 视频封面地址
+	Images   []ImgInfo `json:"images"`             // 图集图片地址列表
 }
 
 type ImgInfo struct {

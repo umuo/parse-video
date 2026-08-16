@@ -71,6 +71,7 @@ func Test_douYin_parseVideoID_Success(t *testing.T) {
 	t.Logf("Parsed video title: %s", info.Title)
 	t.Logf("Parsed video author: %s", info.Author.Name)
 	t.Logf("Parsed video URL: %s", info.VideoUrl)
+	t.Logf("Parsed short URL: %s", info.ShortUrl)
 	t.Logf("Parsed cover URL: %s", info.CoverUrl)
 }
 
@@ -90,6 +91,7 @@ func Test_douYin_parseShareUrl_Success(t *testing.T) {
 	t.Logf("Parsed share URL title: %s", info.Title)
 	t.Logf("Parsed share URL author: %s", info.Author.Name)
 	t.Logf("Parsed share URL video: %s", info.VideoUrl)
+	t.Logf("Parsed share URL short video: %s", info.ShortUrl)
 }
 
 func Test_douYin_parseNoteShareUrl_Success(t *testing.T) {

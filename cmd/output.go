@@ -52,6 +52,9 @@ func formatTextOutput(w io.Writer, info *parser.VideoParseInfo) {
 	if info.VideoUrl != "" {
 		fmt.Fprintf(w, "视频地址: %s\n", info.VideoUrl)
 	}
+	if info.ShortUrl != "" {
+		fmt.Fprintf(w, "短链地址: %s\n", info.ShortUrl)
+	}
 	if info.CoverUrl != "" {
 		fmt.Fprintf(w, "封面地址: %s\n", info.CoverUrl)
 	}
