@@ -107,7 +107,7 @@ func (d douYin) requestAwemeDetail(videoId string, ttwid string) ([]byte, error)
 	client := newClient()
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
 
-	reqUrl := fmt.Sprintf("https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id=%s", videoId)
+	reqUrl := fmt.Sprintf("https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id=%s&aid=6383", videoId)
 	res, err := client.R().
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").
 		SetHeader("Referer", "https://www.douyin.com/").

@@ -91,3 +91,23 @@ func Test_douYin_parseShareUrl_Success(t *testing.T) {
 	t.Logf("Parsed share URL author: %s", info.Author.Name)
 	t.Logf("Parsed share URL video: %s", info.VideoUrl)
 }
+
+func Test_douYin_parseNoteShareUrl_Success(t *testing.T) {
+	d := douYin{}
+	shareUrl := "https://v.douyin.com/-k-MhQJJK6Y/"
+	info, err := d.parseShareUrl(shareUrl)
+	if err != nil {
+		t.Fatalf("parseShareUrl(%s) failed: %v", shareUrl, err)
+	}
+	if info == nil {
+		t.Fatalf("parseShareUrl(%s) returned nil", shareUrl)
+	}
+	if len(info.Images) == 0 {
+		t.Errorf("expected non-empty Images, got 0")
+	}
+	t.Logf("Parsed note title: %s", info.Title)
+	t.Logf("Parsed note author: %s", info.Author.Name)
+	t.Logf("Parsed note images count: %d", len(info.Images))
+	t.Logf("Parsed note music URL: %s", info.MusicUrl)
+}
+
