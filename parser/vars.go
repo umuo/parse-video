@@ -86,7 +86,7 @@ type videoSourceInfo struct {
 // 视频渠道映射信息
 var videoSourceInfoMapping = map[string]videoSourceInfo{
 	SourceDouYin: {
-		VideoShareUrlDomain: []string{"v.douyin.com", "www.iesdouyin.com", "www.douyin.com"},
+		VideoShareUrlDomain: []string{"v.douyin.com", "www.iesdouyin.com", "www.douyin.com", "iesdouyin.com", "douyin.com"},
 		VideoShareUrlParser: douYin{},
 		VideoIdParser:       douYin{},
 	},

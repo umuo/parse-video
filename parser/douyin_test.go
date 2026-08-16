@@ -15,6 +15,10 @@ func Test_douYin_parseIdFromPath(t *testing.T) {
 		wantErr bool
 	}{
 		{"抖音视频", args{"/share/video/7329354490828623130/"}, "7329354490828623130", false},
+		{"抖音视频短链重定向", args{"https://www.iesdouyin.com/share/video/7674213987094344037/?region=CN&mid=7674214312010500899"}, "7674213987094344037", false},
+		{"抖音PC端视频", args{"https://www.douyin.com/video/7674213987094344037"}, "7674213987094344037", false},
+		{"抖音精选modal_id", args{"https://www.douyin.com/jingxuan?modal_id=7555093909760789812"}, "7555093909760789812", false},
+		{"抖音图文笔记", args{"https://www.douyin.com/note/7424432820954598707"}, "7424432820954598707", false},
 		{"西瓜视频", args{"/douyin/share/video/7144194760184594977"}, "7144194760184594977", false},
 		{"异常视频", args{""}, "", true},
 	}
@@ -31,4 +35,59 @@ func Test_douYin_parseIdFromPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_douYin_fetchTTWid(t *testing.T) {
+	d := douYin{}
+	ttwid, err := d.getTTWid()
+	if err != nil {
+		t.Fatalf("getTTWid() failed: %v", err)
+	}
+	if len(ttwid) == 0 {
+		t.Fatal("getTTWid() returned empty ttwid")
+	}
+	t.Logf("acquired ttwid: %s", ttwid)
+}
+
+func Test_douYin_parseVideoID_Success(t *testing.T) {
+	d := douYin{}
+	videoId := "7674213987094344037"
+	info, err := d.parseVideoID(videoId)
+	if err != nil {
+		t.Fatalf("parseVideoID(%s) failed: %v", videoId, err)
+	}
+	if info == nil {
+		t.Fatalf("parseVideoID(%s) returned nil", videoId)
+	}
+	if info.Title == "" {
+		t.Errorf("expected non-empty Title, got empty")
+	}
+	if info.Author.Name == "" {
+		t.Errorf("expected non-empty Author.Name, got empty")
+	}
+	if info.VideoUrl == "" && len(info.Images) == 0 {
+		t.Errorf("expected non-empty VideoUrl or Images")
+	}
+	t.Logf("Parsed video title: %s", info.Title)
+	t.Logf("Parsed video author: %s", info.Author.Name)
+	t.Logf("Parsed video URL: %s", info.VideoUrl)
+	t.Logf("Parsed cover URL: %s", info.CoverUrl)
+}
+
+func Test_douYin_parseShareUrl_Success(t *testing.T) {
+	d := douYin{}
+	shareUrl := "https://v.douyin.com/jz7V8Tf_-rc/"
+	info, err := d.parseShareUrl(shareUrl)
+	if err != nil {
+		t.Fatalf("parseShareUrl(%s) failed: %v", shareUrl, err)
+	}
+	if info == nil {
+		t.Fatalf("parseShareUrl(%s) returned nil", shareUrl)
+	}
+	if info.Title == "" {
+		t.Errorf("expected non-empty Title, got empty")
+	}
+	t.Logf("Parsed share URL title: %s", info.Title)
+	t.Logf("Parsed share URL author: %s", info.Author.Name)
+	t.Logf("Parsed share URL video: %s", info.VideoUrl)
 }
