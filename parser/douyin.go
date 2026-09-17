@@ -121,6 +121,12 @@ func (d douYin) requestAwemeDetail(videoId string, ttwid string) ([]byte, error)
 }
 
 func (d douYin) parseVideoID(videoId string) (*VideoParseInfo, error) {
+	// 1. 优先尝试移动端 slidesinfo 接口（同时支持视频与图文，且免 ArgusSecurity 插件拦截）
+	if info, err := d.parseVideoIDFromSlides(videoId); err == nil && info != nil {
+		return info, nil
+	}
+
+	// 2. 尝试使用 ttwid 请求网页详情接口
 	ttwid, err := d.getTTWid()
 	if err == nil && ttwid != "" {
 		body, reqErr := d.requestAwemeDetail(videoId, ttwid)
@@ -141,8 +147,27 @@ func (d douYin) parseVideoID(videoId string) (*VideoParseInfo, error) {
 		}
 	}
 
-	// 降级回退到旧版 HTML 解析
+	// 3. 降级回退到旧版 HTML 解析
 	return d.parseVideoIDFromHTML(videoId)
+}
+
+func (d douYin) parseVideoIDFromSlides(videoId string) (*VideoParseInfo, error) {
+	reqUrl := fmt.Sprintf("https://www.iesdouyin.com/web/api/v2/aweme/slidesinfo/?aweme_ids=%%5B%s%%5D", videoId)
+
+	client := newClient()
+	res, err := client.R().
+		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1").
+		Get(reqUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	data := gjson.GetBytes(res.Body(), "aweme_details.0")
+	if !data.Exists() || len(data.Map()) == 0 {
+		return nil, errors.New("slidesinfo: aweme_details empty")
+	}
+
+	return d.parseAwemeDetail(data)
 }
 
 func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
@@ -457,25 +482,38 @@ func (d douYin) parseVideoIdFromPath(urlPath string) (string, error) {
 	return "", errors.New("parse video id from path fail")
 }
 
+func (d douYin) isHotlinkProtected(urlStr string) bool {
+	return strings.Contains(urlStr, "-web") ||
+		strings.Contains(urlStr, "://v26-") ||
+		strings.Contains(urlStr, "/aweme/v1/play/")
+}
+
 func (d douYin) pickBestVideoUrl(urlList []gjson.Result) string {
-	// 第一优先级：不带 -web 的真实 CDN 直链（zjcdn, douyinvod, bytevcloud, tos-cn）
+	// 第一优先级：不带防盗链限制（非 -web, 非 v26-）的高质量真实 CDN 直链（zjcdn, douyinvod, bytevcloud, tos-cn, 365yg）
 	for _, u := range urlList {
 		urlStr := u.String()
-		if urlStr == "" || strings.Contains(urlStr, "-web") || strings.Contains(urlStr, "/aweme/v1/play/") {
+		if urlStr == "" || d.isHotlinkProtected(urlStr) {
 			continue
 		}
-		if strings.Contains(urlStr, "zjcdn.com") || strings.Contains(urlStr, "douyinvod.com") || strings.Contains(urlStr, "bytevcloud.com") || strings.Contains(urlStr, "tos-cn-") {
+		if strings.Contains(urlStr, "zjcdn.com") || strings.Contains(urlStr, "douyinvod.com") || strings.Contains(urlStr, "bytevcloud.com") || strings.Contains(urlStr, "tos-cn-") || strings.Contains(urlStr, "365yg.com") {
 			return urlStr
 		}
 	}
-	// 第二优先级：不带 -web 的任意有效非 API 链接
+	// 第二优先级：不带防盗链限制的任意有效非 API 链接
 	for _, u := range urlList {
 		urlStr := u.String()
-		if urlStr != "" && !strings.Contains(urlStr, "-web") && !strings.Contains(urlStr, "/aweme/v1/play/") {
+		if urlStr != "" && !d.isHotlinkProtected(urlStr) {
 			return urlStr
 		}
 	}
-	// 第三优先级：不带 -web 的任何链接
+	// 第三优先级：只要不带 -web 且不带 v26- 的任意链接
+	for _, u := range urlList {
+		urlStr := u.String()
+		if urlStr != "" && !strings.Contains(urlStr, "-web") && !strings.Contains(urlStr, "://v26-") {
+			return urlStr
+		}
+	}
+	// 第四优先级：不带 -web 的链接
 	for _, u := range urlList {
 		urlStr := u.String()
 		if urlStr != "" && !strings.Contains(urlStr, "-web") {
@@ -510,19 +548,20 @@ func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
 	if videoInfo.VideoUrl == "" {
 		return
 	}
-	// 如果已经是干净的非 -web CDN 直链，无需再跟踪重定向
-	if !strings.Contains(videoInfo.VideoUrl, "-web") &&
+	// 如果已经是干净的非防盗链 CDN 直链，无需再跟踪重定向
+	if !d.isHotlinkProtected(videoInfo.VideoUrl) &&
 		(strings.Contains(videoInfo.VideoUrl, "zjcdn.com") ||
 			strings.Contains(videoInfo.VideoUrl, "douyinvod.com") ||
 			strings.Contains(videoInfo.VideoUrl, "bytevcloud.com") ||
-			strings.Contains(videoInfo.VideoUrl, "tos-cn-")) {
+			strings.Contains(videoInfo.VideoUrl, "tos-cn-") ||
+			strings.Contains(videoInfo.VideoUrl, "365yg.com")) {
 		return
 	}
 
-	// 如果包含 -web 或 play API，优先通过 iesdouyin 移动端 short_url 跟踪获取无防盗链 CDN 节点
+	// 如果包含防盗链特征或 play API，优先通过 iesdouyin 移动端 short_url 跟踪获取无防盗链 CDN 节点
 	if videoInfo.ShortUrl != "" {
 		resolved := d.resolveRedirect(videoInfo.ShortUrl)
-		if resolved != "" && !strings.Contains(resolved, "-web") {
+		if resolved != "" && !d.isHotlinkProtected(resolved) {
 			videoInfo.VideoUrl = resolved
 			return
 		}
