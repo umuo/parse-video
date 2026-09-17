@@ -98,23 +98,68 @@ func Test_douYin_parseShareUrl_Success(t *testing.T) {
 
 func Test_douYin_parseNoteShareUrl_Success(t *testing.T) {
 	d := douYin{}
-	shareUrl := "https://v.douyin.com/-k-MhQJJK6Y/"
-	info, err := d.parseShareUrl(shareUrl)
+
+	testCases := []struct {
+		name     string
+		shareUrl string
+		minImgs  int
+	}{
+		{
+			name:     "壁纸图文作品",
+			shareUrl: "https://v.douyin.com/Cn-ZILqSTsA/",
+			minImgs:  12,
+		},
+		{
+			name:     "iOS壁纸图文作品",
+			shareUrl: "https://v.douyin.com/-k-MhQJJK6Y/",
+			minImgs:  1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			info, err := d.parseShareUrl(tc.shareUrl)
+			if err != nil {
+				t.Fatalf("parseShareUrl(%s) failed: %v", tc.shareUrl, err)
+			}
+			if info == nil {
+				t.Fatalf("parseShareUrl(%s) returned nil", tc.shareUrl)
+			}
+			if len(info.Images) < tc.minImgs {
+				t.Errorf("expected at least %d images, got %d", tc.minImgs, len(info.Images))
+			}
+			if info.Title == "" {
+				t.Errorf("expected non-empty title")
+			}
+			if info.Author.Name == "" {
+				t.Errorf("expected non-empty author name")
+			}
+			t.Logf("[%s] title=%s, author=%s, images=%d", tc.name, info.Title, info.Author.Name, len(info.Images))
+		})
+	}
+}
+
+func Test_douYin_parseNoteVideoID_Success(t *testing.T) {
+	d := douYin{}
+	videoId := "7109738393529109771"
+	info, err := d.parseVideoID(videoId)
 	if err != nil {
-		t.Logf("parseShareUrl(%s) note might be deleted/filtered by platform: %v", shareUrl, err)
-		return
+		t.Fatalf("parseVideoID(%s) failed: %v", videoId, err)
 	}
 	if info == nil {
-		t.Fatalf("parseShareUrl(%s) returned nil", shareUrl)
+		t.Fatalf("parseVideoID(%s) returned nil", videoId)
 	}
-	if len(info.Images) == 0 {
-		t.Errorf("expected non-empty Images, got 0")
+	if len(info.Images) != 12 {
+		t.Errorf("expected 12 images, got %d", len(info.Images))
 	}
-	t.Logf("Parsed note title: %s", info.Title)
-	t.Logf("Parsed note author: %s", info.Author.Name)
-	t.Logf("Parsed note images count: %d", len(info.Images))
-	t.Logf("Parsed note music URL: %s", info.MusicUrl)
+	if info.Title != "全面屏2k屏高清壁纸" {
+		t.Errorf("expected title '全面屏2k屏高清壁纸', got %s", info.Title)
+	}
+	if info.Author.Name != "高清壁纸" {
+		t.Errorf("expected author '高清壁纸', got %s", info.Author.Name)
+	}
 }
+
 
 func Test_douYin_pickBestVideoUrl_AvoidV26(t *testing.T) {
 	d := douYin{}

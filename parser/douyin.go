@@ -147,7 +147,12 @@ func (d douYin) parseVideoID(videoId string) (*VideoParseInfo, error) {
 		}
 	}
 
-	// 3. 降级回退到旧版 HTML 解析
+	// 3. 尝试搜索引擎 SEO 结构化数据解析（完美支持被 slidesinfo filter_list 过滤的图文笔记）
+	if info, err := d.parseVideoIDFromSEO(videoId); err == nil && info != nil {
+		return info, nil
+	}
+
+	// 4. 降级回退到旧版 HTML 解析
 	return d.parseVideoIDFromHTML(videoId)
 }
 
@@ -645,4 +650,103 @@ func (d douYin) findCanonical(n *html.Node) string {
 	}
 
 	return ""
+}
+
+func (d douYin) parseVideoIDFromSEO(videoId string) (*VideoParseInfo, error) {
+	client := newClient()
+
+	urls := []string{
+		fmt.Sprintf("https://www.douyin.com/note/%s", videoId),
+		fmt.Sprintf("https://www.iesdouyin.com/share/note/%s/", videoId),
+		fmt.Sprintf("https://www.douyin.com/video/%s", videoId),
+		fmt.Sprintf("https://www.iesdouyin.com/share/video/%s/", videoId),
+	}
+
+	spiderUA := "Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)"
+
+	for _, reqUrl := range urls {
+		res, err := client.R().
+			SetHeader(HttpHeaderUserAgent, spiderUA).
+			Get(reqUrl)
+		if err != nil {
+			continue
+		}
+
+		info, err := d.parseSEOHTML(res.Body(), videoId)
+		if err == nil && info != nil {
+			return info, nil
+		}
+	}
+
+	return nil, errors.New("parse from seo failed")
+}
+
+func (d douYin) parseSEOHTML(htmlBytes []byte, videoId string) (*VideoParseInfo, error) {
+	htmlStr := string(htmlBytes)
+	reScript := regexp.MustCompile(`<script[^>]*type="application/ld\+json"[^>]*>([\s\S]*?)</script>`)
+	matches := reScript.FindAllStringSubmatch(htmlStr, -1)
+	if len(matches) == 0 {
+		reGeneric := regexp.MustCompile(`<script[^>]*>([\s\S]*?)</script>`)
+		matches = reGeneric.FindAllStringSubmatch(htmlStr, -1)
+	}
+
+	for _, m := range matches {
+		content := strings.TrimSpace(m[1])
+		if !strings.Contains(content, "schema.org") {
+			continue
+		}
+
+		title := gjson.Get(content, "headline").String()
+		if title == "" {
+			title = gjson.Get(content, "name").String()
+		}
+		if title == "" {
+			continue
+		}
+
+		imageNodes := gjson.Get(content, "image").Array()
+		images := make([]ImgInfo, 0, len(imageNodes))
+		for _, imgItem := range imageNodes {
+			imgUrl := imgItem.String()
+			if imgUrl != "" {
+				images = append(images, ImgInfo{
+					Url: imgUrl,
+				})
+			}
+		}
+
+		authorName := gjson.Get(content, "author.name").String()
+		authorAvatar := gjson.Get(content, "author.image").String()
+		authorUrl := gjson.Get(content, "author.url").String()
+		var authorUid string
+		if authorUrl != "" {
+			parts := strings.Split(strings.Trim(authorUrl, "/"), "/")
+			if len(parts) > 0 {
+				authorUid = parts[len(parts)-1]
+			}
+		}
+
+		var coverUrl string
+		if len(images) > 0 {
+			coverUrl = images[0].Url
+		} else {
+			coverUrl = gjson.Get(content, "thumbnailUrl.0").String()
+		}
+
+		if len(images) == 0 && coverUrl == "" {
+			continue
+		}
+
+		videoInfo := &VideoParseInfo{
+			Title:    title,
+			CoverUrl: coverUrl,
+			Images:   images,
+		}
+		videoInfo.Author.Uid = authorUid
+		videoInfo.Author.Name = authorName
+		videoInfo.Author.Avatar = authorAvatar
+		return videoInfo, nil
+	}
+
+	return nil, errors.New("no matching schema.org json found")
 }
