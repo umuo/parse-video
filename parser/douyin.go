@@ -553,7 +553,17 @@ func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
 	if videoInfo.VideoUrl == "" {
 		return
 	}
-	// 如果已经是干净的非防盗链 CDN 直链，无需再跟踪重定向
+
+	// 优先通过 short_url 跟踪获取底层高优节点（如 douyinvod.com）
+	if videoInfo.ShortUrl != "" {
+		resolved := d.resolveRedirect(videoInfo.ShortUrl)
+		if resolved != "" && !d.isHotlinkProtected(resolved) {
+			videoInfo.VideoUrl = resolved
+			return
+		}
+	}
+
+	// 兜底逻辑：如果 short_url 解析失败，检查当前 VideoUrl 是否已经是干净的 CDN 直链
 	if !d.isHotlinkProtected(videoInfo.VideoUrl) &&
 		(strings.Contains(videoInfo.VideoUrl, "zjcdn.com") ||
 			strings.Contains(videoInfo.VideoUrl, "douyinvod.com") ||
@@ -561,15 +571,6 @@ func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
 			strings.Contains(videoInfo.VideoUrl, "tos-cn-") ||
 			strings.Contains(videoInfo.VideoUrl, "365yg.com")) {
 		return
-	}
-
-	// 如果包含防盗链特征或 play API，优先通过 iesdouyin 移动端 short_url 跟踪获取无防盗链 CDN 节点
-	if videoInfo.ShortUrl != "" {
-		resolved := d.resolveRedirect(videoInfo.ShortUrl)
-		if resolved != "" && !d.isHotlinkProtected(resolved) {
-			videoInfo.VideoUrl = resolved
-			return
-		}
 	}
 
 	resolved := d.resolveRedirect(videoInfo.VideoUrl)
