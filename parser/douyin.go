@@ -190,7 +190,12 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 		}
 		imageUrl := d.getNoWebpUrl(urlList)
 		if len(imageUrl) > 0 {
-			livePhotoUrl := imgItem.Get("video.play_addr.url_list.0").String()
+			livePhotoUrl := d.pickBestVideoUrl(imgItem.Get("video.play_addr.url_list").Array())
+			if livePhotoUrl != "" {
+				if resolved := d.resolveRedirect(livePhotoUrl); resolved != "" {
+					livePhotoUrl = resolved
+				}
+			}
 			images = append(images, ImgInfo{
 				Url:          imageUrl,
 				LivePhotoUrl: livePhotoUrl,
@@ -345,9 +350,15 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 		urlList := imageItem.Get("url_list").Array()
 		imageUrl := d.getNoWebpUrl(urlList)
 		if len(imageUrl) > 0 {
+			livePhotoUrl := d.pickBestVideoUrl(imageItem.Get("video.play_addr.url_list").Array())
+			if livePhotoUrl != "" {
+				if resolved := d.resolveRedirect(livePhotoUrl); resolved != "" {
+					livePhotoUrl = resolved
+				}
+			}
 			images = append(images, ImgInfo{
 				Url:          imageUrl,
-				LivePhotoUrl: imageItem.Get("video.play_addr.url_list.0").String(),
+				LivePhotoUrl: livePhotoUrl,
 			})
 		}
 	}
