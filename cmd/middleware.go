@@ -204,7 +204,7 @@ func requestLogMiddlewareWithWriter(w io.Writer) gin.HandlerFunc {
 
 // basicAuthMiddleware 自定义 Basic Auth，返回 v1 错误格式
 func basicAuthMiddleware(username, password string, exemptPaths map[string]bool) gin.HandlerFunc {
-	if username == "" || password == "" {
+	if username == "" && password == "" {
 		return func(c *gin.Context) { c.Next() }
 	}
 
@@ -215,7 +215,7 @@ func basicAuthMiddleware(username, password string, exemptPaths map[string]bool)
 		}
 
 		user, pass, hasAuth := c.Request.BasicAuth()
-		if !hasAuth || user != username || pass != password {
+		if !hasAuth || username == "" || password == "" || user != username || pass != password {
 			c.Header("WWW-Authenticate", `Basic realm="parse-video"`)
 			sendError(c, http.StatusUnauthorized, ErrUnauthorized, "认证失败")
 			c.Abort()

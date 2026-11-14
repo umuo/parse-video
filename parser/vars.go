@@ -1,5 +1,7 @@
 package parser
 
+import "context"
+
 // 视频渠道来源
 const (
 	SourceDouYin       = "douyin"       // 抖音
@@ -43,12 +45,12 @@ const (
 
 // videoShareUrlParser 根据视频分享地址解析
 type videoShareUrlParser interface {
-	parseShareUrl(shareUrl string) (*VideoParseInfo, error)
+	parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error)
 }
 
 // videoIdParser 根据视频ID解析
 type videoIdParser interface {
-	parseVideoID(videoId string) (*VideoParseInfo, error)
+	parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error)
 }
 
 // VideoParseInfo 视频解析信息
@@ -59,11 +61,11 @@ type VideoParseInfo struct {
 		Avatar string `json:"avatar"` // 作者头像
 	} `json:"author"`
 	Title    string    `json:"title"`               // 描述
-	VideoUrl string    `json:"video_url"`          // 视频播放地址
+	VideoUrl string    `json:"video_url"`           // 视频播放地址
 	ShortUrl string    `json:"short_url,omitempty"` // 短播放/重定向地址
-	MusicUrl string    `json:"music_url"`          // 音乐播放地址
-	CoverUrl string    `json:"cover_url"`          // 视频封面地址
-	Images   []ImgInfo `json:"images"`             // 图集图片地址列表
+	MusicUrl string    `json:"music_url"`           // 音乐播放地址
+	CoverUrl string    `json:"cover_url"`           // 视频封面地址
+	Images   []ImgInfo `json:"images"`              // 图集图片地址列表
 }
 
 type ImgInfo struct {

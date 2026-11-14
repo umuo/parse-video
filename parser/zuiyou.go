@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 
 type zuiYou struct{}
 
-func (z zuiYou) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (z zuiYou) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlInfo, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, errors.New("parse share url fail")
@@ -28,8 +29,8 @@ func (z zuiYou) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		"pid":  intPid,
 	}
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceZuiYou)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		SetBody(postData).
 		Post("https://share.xiaochuankeji.cn/planck/share/post/detail_h5")

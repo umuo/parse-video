@@ -1,9 +1,11 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 
@@ -13,7 +15,7 @@ import (
 type weiBo struct {
 }
 
-func (w weiBo) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (w weiBo) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlInfo, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, errors.New("parse share url fail")
@@ -25,28 +27,31 @@ func (w weiBo) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 			return nil, errors.New("can not parse video id from share url")
 		}
 		videoId := urlInfo.Query()["fid"][0]
-		return w.parseVideoID(videoId)
+		return w.parseVideoID(ctx, videoId)
 	} else if strings.Contains(shareUrl, "/tv/show/") {
 		videoId := strings.ReplaceAll(urlInfo.Path, "/tv/show/", "")
-		return w.parseVideoID(videoId)
+		return w.parseVideoID(ctx, videoId)
 	} else {
 		// Handle regular post URLs (potential image albums)
 		// Extract post ID from URLs like https://weibo.com/2543858012/Q9pcJ4S21
 		pathParts := strings.Split(strings.Trim(urlInfo.Path, "/"), "/")
 		if len(pathParts) >= 2 {
 			postId := pathParts[len(pathParts)-1]
-			return w.parsePostUrl(postId, shareUrl)
+			return w.parsePostUrl(ctx, postId, shareUrl)
 		}
 	}
 
 	return nil, errors.New("unsupported weibo url format")
 }
 
-func (w weiBo) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (w weiBo) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := fmt.Sprintf("https://h5.video.weibo.com/api/component?page=/show/%s", videoId)
-	client := newClient()
-	videoRes, err := client.R().
-		SetHeader(HttpHeaderCookie, "login_sid_t=6b652c77c1a4bc50cb9d06b24923210d; cross_origin_proto=SSL; WBStorage=2ceabba76d81138d|undefined; _s_tentry=passport.weibo.com; Apache=7330066378690.048.1625663522444; SINAGLOBAL=7330066378690.048.1625663522444; ULV=1625663522450:1:1:1:7330066378690.048.1625663522444:; TC-V-WEIBO-G0=35846f552801987f8c1e8f7cec0e2230; SUB=_2AkMXuScYf8NxqwJRmf8RzmnhaoxwzwDEieKh5dbDJRMxHRl-yT9jqhALtRB6PDkJ9w8OaqJAbsgjdEWtIcilcZxHG7rw; SUBP=0033WrSXqPxfM72-Ws9jqgMF55529P9D9W5Qx3Mf.RCfFAKC3smW0px0; XSRF-TOKEN=JQSK02Ijtm4Fri-YIRu0-vNj").
+	client := newClient(SourceWeiBo)
+	request := client.R().SetContext(ctx)
+	if cookie := os.Getenv("PARSE_VIDEO_WEIBO_COOKIE"); cookie != "" {
+		request.SetHeader(HttpHeaderCookie, cookie)
+	}
+	videoRes, err := request.
 		SetHeader(HttpHeaderReferer, "https://h5.video.weibo.com/show/"+videoId).
 		SetHeader(HttpHeaderContentType, "application/x-www-form-urlencoded").
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
@@ -75,12 +80,12 @@ func (w weiBo) parseVideoID(videoId string) (*VideoParseInfo, error) {
 	return parseInfo, nil
 }
 
-func (w weiBo) parsePostUrl(postId string, originalUrl string) (*VideoParseInfo, error) {
+func (w weiBo) parsePostUrl(ctx context.Context, postId string, originalUrl string) (*VideoParseInfo, error) {
 	// Try mobile API first
 	reqUrl := fmt.Sprintf("https://m.weibo.cn/statuses/show?id=%s", postId)
-	client := newClient()
+	client := newClient(SourceWeiBo)
 
-	res, err := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1").
 		SetHeader(HttpHeaderReferer, "https://m.weibo.cn/").
 		SetHeader(HttpHeaderContentType, "application/json;charset=UTF-8").
@@ -94,7 +99,7 @@ func (w weiBo) parsePostUrl(postId string, originalUrl string) (*VideoParseInfo,
 	}
 
 	// Fallback to desktop page parsing using the original URL
-	res, err = client.R().
+	res, err = client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36").
 		Get(originalUrl)
 	if err != nil {

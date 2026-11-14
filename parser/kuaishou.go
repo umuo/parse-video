@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,41 +15,34 @@ import (
 
 type kuaiShou struct{}
 
-func (k kuaiShou) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
+func (k kuaiShou) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	client := newClient(SourceKuaiShou)
 	//// disable redirects in the HTTP client, get params before redirects
 	//client.SetRedirectPolicy(resty.NoRedirectPolicy())
 	// 设置自定义重定向策略
-	client.SetRedirectPolicy(resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
-		fmt.Println(req.URL.Path)
+	client.SetRedirectPolicy(resty.FlexibleRedirectPolicy(maxRedirects), stripRedirectCredentials, resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
 		// 检查是否 /short-video/3xb58q4e3egqttc 这样的路径，如果是就继续跟随 Location 重定向，否则就停止
 		if matched, _ := regexp.MatchString(`^/short-video/[^/]+/?$`, req.URL.Path); !matched {
 			return resty.ErrAutoRedirectDisabled
 		}
 		return nil
 	}))
-	shareRes, err := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		SetHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7").
 		Get(shareUrl)
-	// 非 resty.ErrAutoRedirectDisabled 错误时，返回错误
-	if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
-		return nil, err
+	if errors.Is(err, resty.ErrAutoRedirectDisabled) {
+		location, locationErr := checkedLocation(SourceKuaiShou, res)
+		if locationErr != nil {
+			return nil, locationErr
+		}
+		// /fw/long-video/ 返回结果不一样, 统一替换为 /fw/photo/ 请求
+		locationURL := strings.ReplaceAll(location.String(), "/fw/long-video/", "/fw/photo/")
+		res, err = client.R().SetContext(ctx).
+			SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
+			SetHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7").
+			Get(locationURL)
 	}
-
-	locationRes, err := shareRes.RawResponse.Location()
-	if err != nil {
-		return nil, err
-	}
-
-	// /fw/long-video/ 返回结果不一样, 统一替换为 /fw/photo/ 请求
-	locationUrl := locationRes.String()
-	locationUrl = strings.ReplaceAll(locationUrl, "/fw/long-video/", "/fw/photo/")
-
-	res, err := client.R().
-		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
-		SetHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7").
-		Get(locationUrl)
 	if err != nil {
 		return nil, err
 	}

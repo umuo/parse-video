@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"testing"
 )
 
@@ -92,7 +93,7 @@ func TestCCTVSourceMapping(t *testing.T) {
 // TestCCTVVideoIDEmpty 验证空 GUID 返回错误
 func TestCCTVVideoIDEmpty(t *testing.T) {
 	c := cctvVideo{}
-	_, err := c.parseVideoID("")
+	_, err := c.parseVideoID(context.Background(), "")
 	if err == nil {
 		t.Error("空 GUID 应返回错误")
 	}

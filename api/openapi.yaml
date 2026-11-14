@@ -88,7 +88,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: 解析失败（平台接口异常）
+          description: 解析失败（含上游超时或响应超出大小限制），响应消息经过脱敏
           content:
             application/json:
               schema:
@@ -154,7 +154,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: 解析失败
+          description: 解析失败（含上游超时或响应超出大小限制），响应消息经过脱敏
           content:
             application/json:
               schema:

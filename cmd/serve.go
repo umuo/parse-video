@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -24,6 +25,11 @@ var serveCmd = &cobra.Command{
 func runServe(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	addr := ":" + port
+	username := os.Getenv("PARSE_VIDEO_USERNAME")
+	password := os.Getenv("PARSE_VIDEO_PASSWORD")
+	if (username == "") != (password == "") {
+		return errors.New("PARSE_VIDEO_USERNAME 和 PARSE_VIDEO_PASSWORD 必须同时设置或同时留空")
+	}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -31,8 +37,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// 中间件栈：Recovery → CORS → 日志 → 速率限制 → Basic Auth
 	rateLimitRPM := getEnvInt("RATE_LIMIT_RPM", 60)
 	corsOrigins := getEnvDefault("CORS_ORIGINS", "*")
-	username := os.Getenv("PARSE_VIDEO_USERNAME")
-	password := os.Getenv("PARSE_VIDEO_PASSWORD")
 
 	exemptPaths := map[string]bool{
 		"/api/v1/health":    true,
@@ -43,7 +47,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	r.Use(recoveryMiddleware())
 	r.Use(corsMiddleware(corsOrigins))
 	r.Use(requestLogMiddleware())
-	r.Use(rateLimitMiddleware(newIPRateLimiter(rateLimitRPM), "/api/v1/health", "/static/"))
+	limiter := newIPRateLimiter(rateLimitRPM)
+	defer limiter.Stop()
+	r.Use(rateLimitMiddleware(limiter, "/api/v1/health", "/static/"))
 	r.Use(basicAuthMiddleware(username, password, exemptPaths))
 
 	// 静态资源（CSS/JS/favicon）
@@ -76,7 +82,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 	r.GET("/video/share/url/parse", legacyParseURLHandler)
 	r.GET("/video/id/parse", legacyParseIDHandler)
 
-	srv := &http.Server{Addr: addr, Handler: r}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      40 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	log.Printf("服务启动，监听端口 %s", addr)
 
 	serveErr := make(chan error, 1)

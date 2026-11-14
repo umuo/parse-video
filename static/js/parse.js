@@ -1,74 +1,129 @@
-// 原有的解析功能
+// MDUI inserts snackbar messages as HTML, so encode text before passing it in.
+function showTextSnackbar(message, timeout = 4000) {
+    const text = document.createElement("div");
+    text.textContent = message;
+    mdui.snackbar({ message: text.innerHTML, timeout });
+}
+
+function safeMediaURL(value) {
+    if (typeof value !== "string") {
+        return null;
+    }
+    try {
+        const url = new URL(value);
+        if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
+            return url.href;
+        }
+    } catch {
+        // The API may return empty or malformed URLs for optional media.
+    }
+    return null;
+}
+
+function appendDownloadLink(container, url, label, filename) {
+    if (!url) {
+        return;
+    }
+    const link = document.createElement("a");
+    link.className = "mdui-btn mdui-btn-raised";
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.download = filename;
+    link.referrerPolicy = "no-referrer";
+    const text = document.createElement("span");
+    text.textContent = label;
+    link.append(text);
+    container.append(link);
+    return link;
+}
+
+function renderParseResult(data) {
+    const result = document.createDocumentFragment();
+    const title = document.createElement("h4");
+    title.textContent = typeof data.title === "string" ? data.title : "";
+    result.append(title);
+    appendDownloadLink(result, safeMediaURL(data.cover_url), "下载封面", "video");
+    appendDownloadLink(result, safeMediaURL(data.video_url), "下载视频", "video");
+    appendDownloadLink(result, safeMediaURL(data.music_url), "下载音频", "audio");
+
+    const gallery = Array.isArray(data.images) ? data.images.flatMap((item, index) => {
+        const url = safeMediaURL(item?.url);
+        const livePhotoURL = safeMediaURL(item?.live_photo_url);
+        return url || livePhotoURL ? [{ url, livePhotoURL, number: index + 1 }] : [];
+    }) : [];
+    if (gallery.length > 0) {
+        const header = document.createElement("div");
+        header.style.cssText = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 1em;";
+        const label = document.createElement("h4");
+        label.style.margin = "0";
+        label.textContent = "图集";
+        header.append(label);
+
+        const images = gallery.filter(item => item.url);
+        if (images.length > 0) {
+            const download = document.createElement("button");
+            download.type = "button";
+            download.className = "mdui-btn mdui-color-theme-accent mdui-ripple";
+            const downloadLabel = document.createElement("span");
+            downloadLabel.textContent = "下载全部图片";
+            download.append(downloadLabel);
+            download.addEventListener("click", () => downloadAllImages(images, title.textContent));
+            header.append(download);
+        }
+        result.append(document.createElement("hr"), header);
+
+        for (const item of gallery) {
+            const card = document.createElement("div");
+            card.style.cssText = "display: inline-block; margin: 1em; text-align: center;";
+            const links = document.createElement("div");
+            links.style.marginTop = "0.5em";
+            if (item.url) {
+                const image = document.createElement("img");
+                image.src = item.url;
+                image.referrerPolicy = "no-referrer";
+                image.style.cssText = "width: 160px; display: block; margin-bottom: 0.5em;";
+                card.append(image);
+                const imageLink = appendDownloadLink(links, item.url, "下载图片", "image_" + item.number + "." + getImageExtension(item.url));
+                imageLink.style.cssText = "text-transform: none; margin-right: 0.5em;";
+            }
+            if (item.livePhotoURL) {
+                const livePhotoLink = appendDownloadLink(links, item.livePhotoURL, "下载LivePhoto", "live_photo_" + item.number + ".mp4");
+                livePhotoLink.style.textTransform = "none";
+            }
+            card.append(links);
+            result.append(card);
+        }
+    }
+
+    document.querySelector(".down").replaceChildren(result);
+}
+
 async function setValue() {
-    var data = document.getElementById("url").value;
-    let regex = /http[s]?:\/\/[\w.-]+[\w\/-]*[\w.-:]*\??[\w=&:\-\+\%.]*[/]*/;
-    var v = data.match(regex)[0];
+    const data = document.getElementById("url").value.trim();
+    if (!data) {
+        showTextSnackbar("需要解析的视频地址不能为空");
+        return;
+    }
 
-    // 异步请求，避免同步 XHR 阻塞主线程导致 UI 冻结
-    var resp = await fetch("/video/share/url/parse?url=" + encodeURIComponent(v));
-    var jsonObj = await resp.json();
+    let response;
+    try {
+        const request = await fetch("/video/share/url/parse?url=" + encodeURIComponent(data));
+        response = await request.json();
+    } catch {
+        showTextSnackbar("解析请求失败，请稍后重试");
+        return;
+    }
 
-    if (jsonObj.code == 200) {
-        mdui.snackbar({
-            message: '解析成功'
-        });
-
-        let successHtml = '<h4>' + jsonObj.data.title + ' </h4>';
-        successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + jsonObj.data.cover_url + '" target="_blank" download="video" referrerpolicy="no-referrer"><span>下载封面</span></a>';
-
-        // 如果video_url不为空, 则显示下载视频按钮
-        if (jsonObj.data.video_url != "") {
-            successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + jsonObj.data.video_url + '" target="_blank" download="video" referrerpolicy="no-referrer"><span>下载视频</span></a>';
-        }
-
-        // 如果music_url不为空, 则显示下载音频按钮
-        if (jsonObj.data.music_url && jsonObj.data.music_url != "") {
-            successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + jsonObj.data.music_url + '" target="_blank" download="audio" referrerpolicy="no-referrer"><span>下载音频</span></a>';
-        }
-
-        // 如果 jsonObj.data.images 是数组， 并且长度大于0, 则img展示图片
-        if (jsonObj.data.images && jsonObj.data.images.length > 0) {
-            successHtml += "<hr/>";
-            successHtml += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1em;">';
-            successHtml += '<h4 style="margin: 0;">图集</h4>';
-
-            // 将图片数据存储到全局变量,避免在HTML属性中传递大量数据
-            const downloadDataId = 'download_data_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-            window[downloadDataId] = {
-                images: jsonObj.data.images,
-                title: jsonObj.data.title || ''
-            };
-
-            // 使用data属性存储ID,点击时读取全局变量
-            successHtml += '<button class="mdui-btn mdui-color-theme-accent mdui-ripple" ' +
-                          'data-download-id="' + downloadDataId + '" ' +
-                          'onclick="handleDownloadClick(this)"><span>下载全部图片</span></button>';
-
-            successHtml += '</div>';
-
-            jsonObj.data.images.forEach(function (item, index) {
-                successHtml += '<div style="display: inline-block; margin: 1em; text-align: center;">';
-                successHtml += '<img src="' + item.url + '" referrerpolicy="no-referrer" style="width: 160px; display: block; margin-bottom: 0.5em;"/>';
-                successHtml += '<div style="margin-top: 0.5em;">';
-                successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + item.url + '" target="_blank" download="image_' + (index + 1) + '.' + getImageExtension(item.url) + '" referrerpolicy="no-referrer" style="text-transform: none; margin-right: 0.5em;"><span>下载图片</span></a>';
-                // 如果 item.live_photo_url 不为空， 显示下载按钮
-                if (item.live_photo_url) {
-                    successHtml += '<a class="mdui-btn mdui-btn-raised" href="' + item.live_photo_url + '" target="_blank" download="live_photo_' + (index + 1) + '.mp4" referrerpolicy="no-referrer" style="text-transform: none;"><span>下载LivePhoto</span></a>';
-                }
-                successHtml += '</div>';
-                successHtml += '</div>';
-            });
-        }
-
-        document.querySelector(".down").innerHTML = successHtml;
+    if (response?.code === 200 && response.data) {
+        renderParseResult(response.data);
+        showTextSnackbar("解析成功");
     } else {
-        mdui.snackbar({
-            message: "解析失败,视频不存在或者链接不正确:<br/>" + jsonObj.msg
-        });
+        const detail = typeof response?.msg === "string" ? response.msg : "";
+        showTextSnackbar("解析失败，视频不存在或者链接不正确" + (detail ? "：" + detail : ""));
     }
 }
 
-// 新增清空输入框内容的函数
 function clearInput() {
     document.getElementById("url").value = "";
 }

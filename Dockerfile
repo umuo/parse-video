@@ -1,9 +1,10 @@
-FROM golang:alpine AS builder
+FROM golang:1.26.10-alpine AS builder
 
 LABEL stage=gobuilder
 
 ENV CGO_ENABLED 0
 ENV GOPROXY https://goproxy.cn,direct
+ENV GOTOOLCHAIN=local
 
 RUN apk update --no-cache && apk add --no-cache tzdata
 

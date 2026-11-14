@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -53,7 +55,7 @@ var parseCmd = &cobra.Command{
 			download, _ := cmd.Flags().GetBool("download")
 			if download {
 				outputDir, _ := cmd.Flags().GetString("output-dir")
-				if err := downloadMedia(info, outputDir); err != nil {
+				if err := downloadMedia(cmd.Context(), info, outputDir); err != nil {
 					return err
 				}
 			}
@@ -76,7 +78,7 @@ func readInputsFromFile(filePath string) ([]string, error) {
 	if filePath == "-" {
 		reader = os.Stdin
 	} else {
-		f, err := os.Open(filePath)
+		f, err := os.Open(filePath) // #nosec G304 -- The local CLI caller explicitly selects the input file with --file.
 		if err != nil {
 			return nil, fmt.Errorf("无法读取文件: %s: %w", filePath, err)
 		}
@@ -126,7 +128,10 @@ func runBatchParse(cmd *cobra.Command, inputs []string, format string) error {
 		outputDir, _ := cmd.Flags().GetString("output-dir")
 		for _, item := range items {
 			if !item.Failed && item.Data != nil {
-				if err := downloadMedia(item.Data, outputDir); err != nil {
+				if err := downloadMedia(cmd.Context(), item.Data, outputDir); err != nil {
+					if errors.Is(err, fs.ErrExist) || cmd.Context().Err() != nil {
+						return err
+					}
 					fmt.Fprintf(os.Stderr, "下载失败 [%s]: %v\n", item.Input, err)
 				}
 			}

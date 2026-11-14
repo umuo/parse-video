@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"net/url"
 	"sort"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/wujunwei928/parse-video/parser"
@@ -11,13 +9,13 @@ import (
 )
 
 var (
-	parseVideoShareURL = parser.ParseVideoShareUrlByRegexp
-	parseVideoID       = parser.ParseVideoId
+	parseVideoShareURL = parser.ParseVideoShareUrlByRegexpContext
+	parseVideoID       = parser.ParseVideoIdContext
 )
 
 func sendLegacyResponse(c *gin.Context, data *parser.VideoParseInfo, err error) {
 	if err != nil {
-		c.JSON(200, gin.H{"code": 201, "msg": err.Error()})
+		c.JSON(200, gin.H{"code": 201, "msg": parseErrorMessage(err)})
 		return
 	}
 	c.JSON(200, gin.H{"code": 200, "msg": "解析成功", "data": data})
@@ -109,10 +107,10 @@ func v1ParseURLHandler(c *gin.Context) {
 		return
 	}
 
-	info, err := parseVideoShareURL(rawURL)
+	info, err := parseVideoShareURL(c.Request.Context(), rawURL)
 	if err != nil {
 		status, code := classifyParseError(err)
-		sendError(c, status, code, err.Error())
+		sendError(c, status, code, parseErrorMessage(err))
 		return
 	}
 	sendSuccess(c, info)
@@ -124,7 +122,7 @@ func v1ParseIDHandler(c *gin.Context) {
 
 	info, exists := parser.VideoSourceInfoMapping[source]
 	if !exists {
-		sendError(c, 400, ErrUnsupportedSource, "未知的平台: "+source)
+		sendError(c, 400, ErrUnsupportedSource, "未知的平台")
 		return
 	}
 	if info.VideoIdParser == nil {
@@ -132,41 +130,28 @@ func v1ParseIDHandler(c *gin.Context) {
 		return
 	}
 
-	parseInfo, err := parseVideoID(source, videoID)
+	parseInfo, err := parseVideoID(c.Request.Context(), source, videoID)
 	if err != nil {
 		status, code := classifyParseError(err)
-		sendError(c, status, code, err.Error())
+		sendError(c, status, code, parseErrorMessage(err))
 		return
 	}
 	sendSuccess(c, parseInfo)
 }
 
 func matchPlatform(rawURL string) bool {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	for _, sourceInfo := range parser.VideoSourceInfoMapping {
-		for _, domain := range sourceInfo.VideoShareUrlDomain {
-			domain = strings.ToLower(domain)
-			if host == domain || strings.HasSuffix(host, "."+domain) {
-				return true
-			}
-		}
-	}
-	return false
+	return parser.IsSupportedShareURL(rawURL)
 }
 
 func legacyParseURLHandler(c *gin.Context) {
 	rawURL := c.Query("url")
-	parseRes, err := parseVideoShareURL(rawURL)
+	parseRes, err := parseVideoShareURL(c.Request.Context(), rawURL)
 	sendLegacyResponse(c, parseRes, err)
 }
 
 func legacyParseIDHandler(c *gin.Context) {
 	source := c.Query("source")
 	videoID := c.Query("video_id")
-	parseRes, err := parseVideoID(source, videoID)
+	parseRes, err := parseVideoID(c.Request.Context(), source, videoID)
 	sendLegacyResponse(c, parseRes, err)
 }

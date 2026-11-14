@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -15,18 +16,18 @@ var cctvGuidRe = regexp.MustCompile(`var\s+guid\s*=\s*"([^"]+)"`)
 type cctvVideo struct{}
 
 // parseShareUrl 根据分享链接解析央视网视频信息
-func (c cctvVideo) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (c cctvVideo) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	// 请求页面 HTML 提取视频 GUID
-	guid, err := c.extractGuid(shareUrl)
+	guid, err := c.extractGuid(ctx, shareUrl)
 	if err != nil {
 		return nil, fmt.Errorf("提取视频GUID失败: %w", err)
 	}
 
-	return c.parseVideoID(guid)
+	return c.parseVideoID(ctx, guid)
 }
 
 // parseVideoID 根据视频GUID解析央视网视频信息
-func (c cctvVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (c cctvVideo) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	if len(videoId) == 0 {
 		return nil, errors.New("视频GUID不能为空")
 	}
@@ -37,8 +38,8 @@ func (c cctvVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
 		videoId,
 	)
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceCCTV)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(apiUrl)
 	if err != nil {
@@ -78,9 +79,9 @@ func (c cctvVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
 }
 
 // extractGuid 从页面 URL 请求并提取视频 GUID
-func (c cctvVideo) extractGuid(pageUrl string) (string, error) {
-	client := newClient()
-	res, err := client.R().
+func (c cctvVideo) extractGuid(ctx context.Context, pageUrl string) (string, error) {
+	client := newClient(SourceCCTV)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(pageUrl)
 	if err != nil {

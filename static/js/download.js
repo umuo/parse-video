@@ -1,32 +1,3 @@
-// 处理下载按钮点击事件
-function handleDownloadClick(button) {
-    try {
-        const downloadDataId = button.getAttribute('data-download-id');
-        if (!downloadDataId) {
-            mdui.snackbar({
-                message: '下载数据ID不存在,请刷新页面重试'
-            });
-            return;
-        }
-
-        const downloadData = window[downloadDataId];
-        if (!downloadData || !downloadData.images) {
-            mdui.snackbar({
-                message: '下载数据不存在,请刷新页面重试'
-            });
-            return;
-        }
-
-        // 调用批量下载函数
-        downloadAllImages(downloadData.images, downloadData.title);
-    } catch (error) {
-        console.error('处理下载点击失败:', error);
-        mdui.snackbar({
-            message: '启动下载失败:' + error.message
-        });
-    }
-}
-
 // 批量下载图片函数
 async function downloadAllImages(images, title) {
     try {
@@ -54,7 +25,8 @@ async function downloadAllImages(images, title) {
 
         // 显示下载进度提示
         const progressMsg = document.createElement('div');
-        progressMsg.innerHTML = `<div class="loading">正在准备下载 ${images.length} 张图片</div>`;
+        progressMsg.className = 'loading';
+        progressMsg.textContent = `正在准备下载 ${images.length} 张图片`;
         document.body.appendChild(progressMsg);
 
         // 创建JSZip实例
@@ -128,10 +100,7 @@ async function downloadAllImages(images, title) {
 
     } catch (error) {
         console.error('批量下载失败:', error);
-        mdui.snackbar({
-            message: '批量下载失败：' + error.message,
-            timeout: 5000
-        });
+        showTextSnackbar('批量下载失败：' + error.message, 5000);
     }
 }
 

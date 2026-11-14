@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 
 	"github.com/go-resty/resty/v2"
@@ -10,10 +11,10 @@ import (
 type huoShan struct {
 }
 
-func (h huoShan) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (h huoShan) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := "https://share.huoshan.com/api/item/info?item_id=" + videoId
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceHuoShan)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(reqUrl)
 	if err != nil {
@@ -32,19 +33,21 @@ func (h huoShan) parseVideoID(videoId string) (*VideoParseInfo, error) {
 	return parseRes, nil
 }
 
-func (h huoShan) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
+func (h huoShan) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	client := newClient(SourceHuoShan)
 	// disable redirects in the HTTP client, get params before redirects
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
-	res, err := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(shareUrl)
-	// 非 resty.ErrAutoRedirectDisabled 错误时，返回错误
+	if err == nil {
+		return nil, errShortLinkDidNotRedirect
+	}
 	if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
 		return nil, err
 	}
 
-	locationRes, err := res.RawResponse.Location()
+	locationRes, err := checkedLocation(SourceHuoShan, res)
 	if err != nil {
 		return nil, err
 	}
@@ -54,5 +57,5 @@ func (h huoShan) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		return nil, errors.New("parse video id from share url fail")
 	}
 
-	return h.parseVideoID(videoId)
+	return h.parseVideoID(ctx, videoId)
 }

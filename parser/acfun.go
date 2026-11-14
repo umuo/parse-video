@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
@@ -10,9 +11,9 @@ import (
 type acFun struct {
 }
 
-func (a acFun) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
-	res, err := client.R().
+func (a acFun) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	client := newClient(SourceAcFun)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "User-Agent:Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1").
 		Get(shareUrl)
 	if err != nil {
@@ -37,8 +38,8 @@ func (a acFun) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 	return parseInfo, nil
 }
 
-func (a acFun) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (a acFun) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	// acid, 格式: ac36935385
 	reqUrl := "https://www.acfun.cn/v/" + videoId
-	return a.parseShareUrl(reqUrl)
+	return a.parseShareUrl(ctx, reqUrl)
 }

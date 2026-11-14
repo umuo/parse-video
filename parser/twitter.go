@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -15,19 +16,19 @@ import (
 
 type twitter struct{}
 
-func (t twitter) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
+func (t twitter) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	client := newClient(SourceTwitter)
 
 	// 处理 t.co 短链: 需要先跟随重定向获取真实URL
 	if strings.Contains(shareUrl, "t.co/") {
 		client.SetRedirectPolicy(resty.NoRedirectPolicy())
-		res, err := client.R().
+		res, err := client.R().SetContext(ctx).
 			SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 			Get(shareUrl)
 		if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
 			return nil, fmt.Errorf("请求 t.co 短链失败: %v", err)
 		}
-		locationRes, err := res.RawResponse.Location()
+		locationRes, err := checkedLocation(SourceTwitter, res)
 		if err != nil {
 			return nil, fmt.Errorf("获取 t.co 重定向地址失败: %v", err)
 		}
@@ -40,15 +41,15 @@ func (t twitter) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		return nil, err
 	}
 
-	return t.parseVideoID(tweetId)
+	return t.parseVideoID(ctx, tweetId)
 }
 
-func (t twitter) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (t twitter) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	token := t.getToken(videoId)
 	apiUrl := fmt.Sprintf("https://cdn.syndication.twimg.com/tweet-result?id=%s&token=%s", videoId, token)
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceTwitter)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").
 		SetHeader("Accept", "application/json").
 		SetHeader("Referer", "https://platform.twitter.com/").

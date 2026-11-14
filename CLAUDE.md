@@ -191,23 +191,13 @@ Key platforms include:
 
 ### Issue tracker
 
-Issues are tracked in GitHub Issues using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues 记录在 GitHub Issues（wujunwei928/parse-video），使用 `gh` CLI。见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels
 
-Uses the default five-label triage vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+使用默认五标签 triage 词汇（needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix）。见 `docs/agents/triage-labels.md`。
 
 ### Domain docs
 
-Single-context layout: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context 布局：仓库根目录一个 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。
 
----
-
-## AI 知识库使用规则（强制）
-
-> **IMPORTANT**: 本项目有 AI 编程知识库。任何代码修改前，必须先读取知识库中的相关文档。详见 `docs/knowledge/00_ai_entry.md`。
-
-- **入口文件**：`docs/knowledge/00_ai_entry.md`
-- **全局索引**：`docs/knowledge/99_global_index.md`（按任务类型定位必读文档）
-- **强制流程**：先读全局索引 → 再读对应文档 → 然后编码 → 最后判断是否更新知识库
-- **高风险区域**：解析路由、中间件栈、Basic Auth、URL 正则、部署配置 → 修改前必须读 `docs/knowledge/05_change_safety.md`

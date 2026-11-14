@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -23,7 +24,7 @@ var (
 
 type douYin struct{}
 
-func (d douYin) getTTWid() (string, error) {
+func (d douYin) getTTWid(ctx context.Context) (string, error) {
 	douyinTTWidMutex.RLock()
 	if douyinTTWid != "" {
 		ttwid := douyinTTWid
@@ -39,7 +40,7 @@ func (d douYin) getTTWid() (string, error) {
 		return douyinTTWid, nil
 	}
 
-	ttwid, err := d.fetchTTWid()
+	ttwid, err := d.fetchTTWid(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -47,11 +48,11 @@ func (d douYin) getTTWid() (string, error) {
 	return ttwid, nil
 }
 
-func (d douYin) refreshTTWid() (string, error) {
+func (d douYin) refreshTTWid(ctx context.Context) (string, error) {
 	douyinTTWidMutex.Lock()
 	defer douyinTTWidMutex.Unlock()
 
-	ttwid, err := d.fetchTTWid()
+	ttwid, err := d.fetchTTWid(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -59,8 +60,8 @@ func (d douYin) refreshTTWid() (string, error) {
 	return ttwid, nil
 }
 
-func (d douYin) fetchTTWid() (string, error) {
-	client := newClient()
+func (d douYin) fetchTTWid(ctx context.Context) (string, error) {
+	client := newClient(SourceDouYin)
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
 
 	body := map[string]any{
@@ -73,8 +74,8 @@ func (d douYin) fetchTTWid() (string, error) {
 		"union":         true,
 	}
 
-	res, err := client.R().
-		SetHeader("Content-Type", "application/json").
+	res, err := client.R().SetContext(ctx).
+		SetHeader(HttpHeaderContentType, "application/json").
 		SetBody(body).
 		Post("https://ttwid.bytedance.com/ttwid/union/register/")
 	if err != nil {
@@ -103,15 +104,15 @@ func (d douYin) fetchTTWid() (string, error) {
 	return "", errors.New("failed to acquire douyin ttwid cookie from register response")
 }
 
-func (d douYin) requestAwemeDetail(videoId string, ttwid string) ([]byte, error) {
-	client := newClient()
+func (d douYin) requestAwemeDetail(ctx context.Context, videoId string, ttwid string) ([]byte, error) {
+	client := newClient(SourceDouYin)
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
 
 	reqUrl := fmt.Sprintf("https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id=%s&aid=6383", videoId)
-	res, err := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36").
-		SetHeader("Referer", "https://www.douyin.com/").
-		SetHeader("Cookie", fmt.Sprintf("ttwid=%s", ttwid)).
+		SetHeader(HttpHeaderReferer, "https://www.douyin.com/").
+		SetHeader(HttpHeaderCookie, fmt.Sprintf("ttwid=%s", ttwid)).
 		Get(reqUrl)
 	if err != nil {
 		return nil, err
@@ -120,47 +121,61 @@ func (d douYin) requestAwemeDetail(videoId string, ttwid string) ([]byte, error)
 	return res.Body(), nil
 }
 
-func (d douYin) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (d douYin) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	// 1. 优先尝试移动端 slidesinfo 接口（同时支持视频与图文，且免 ArgusSecurity 插件拦截）
-	if info, err := d.parseVideoIDFromSlides(videoId); err == nil && info != nil {
+	if info, err := d.parseVideoIDFromSlides(ctx, videoId); err == nil && info != nil {
 		return info, nil
 	}
 
-	// 2. 尝试使用 ttwid 请求网页详情接口
-	ttwid, err := d.getTTWid()
-	if err == nil && ttwid != "" {
-		body, reqErr := d.requestAwemeDetail(videoId, ttwid)
-		if reqErr == nil {
-			data := gjson.GetBytes(body, "aweme_detail")
-			if !data.Exists() || len(data.Map()) == 0 {
-				// Refresh ttwid and try once more
-				if refreshedTTWid, refErr := d.refreshTTWid(); refErr == nil {
-					if refreshedBody, refErr2 := d.requestAwemeDetail(videoId, refreshedTTWid); refErr2 == nil {
-						data = gjson.GetBytes(refreshedBody, "aweme_detail")
+	// 2a. 若部署环境变量提供 PARSE_VIDEO_DOUYIN_COOKIE，优先使用带 a_bogus 签名的官方详情接口
+	client := newClient(SourceDouYin)
+	if data, err := d.fetchNativeVideoDetail(ctx, client, videoId); err == nil && data.Exists() && len(data.Map()) > 0 {
+		if info, parseErr := d.parseAwemeDetail(ctx, data); parseErr == nil && info != nil {
+			return info, nil
+		}
+	}
+
+	// 2b. 尝试使用匿名 ttwid 请求网页详情接口
+	if ttwid, err := d.getTTWid(ctx); err == nil && ttwid != "" {
+		var data gjson.Result
+		if body, reqErr := d.requestAwemeDetail(ctx, videoId, ttwid); reqErr == nil {
+			data = gjson.GetBytes(body, "aweme_detail")
+		}
+		if !data.Exists() || len(data.Map()) == 0 {
+			// Refresh ttwid and try once more
+			if refreshedTTWid, refErr := d.refreshTTWid(ctx); refErr == nil && refreshedTTWid != "" {
+				if refreshedBody, refErr2 := d.requestAwemeDetail(ctx, videoId, refreshedTTWid); refErr2 == nil {
+					data = gjson.GetBytes(refreshedBody, "aweme_detail")
+				}
+				if !data.Exists() || len(data.Map()) == 0 {
+					if signedData, signErr := newDouyinWebDetailFetcher(client, "ttwid="+refreshedTTWid).fetch(ctx, videoId); signErr == nil {
+						data = signedData
 					}
 				}
 			}
+		}
 
-			if data.Exists() && len(data.Map()) > 0 {
-				return d.parseAwemeDetail(data)
+		if data.Exists() && len(data.Map()) > 0 {
+			if info, parseErr := d.parseAwemeDetail(ctx, data); parseErr == nil && info != nil {
+				return info, nil
 			}
 		}
 	}
 
 	// 3. 尝试搜索引擎 SEO 结构化数据解析（完美支持被 slidesinfo filter_list 过滤的图文笔记）
-	if info, err := d.parseVideoIDFromSEO(videoId); err == nil && info != nil {
+	if info, err := d.parseVideoIDFromSEO(ctx, videoId); err == nil && info != nil {
 		return info, nil
 	}
 
 	// 4. 降级回退到旧版 HTML 解析
-	return d.parseVideoIDFromHTML(videoId)
+	return d.parseVideoIDFromHTML(ctx, videoId)
 }
 
-func (d douYin) parseVideoIDFromSlides(videoId string) (*VideoParseInfo, error) {
+func (d douYin) parseVideoIDFromSlides(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := fmt.Sprintf("https://www.iesdouyin.com/web/api/v2/aweme/slidesinfo/?aweme_ids=%%5B%s%%5D", videoId)
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceDouYin)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1").
 		Get(reqUrl)
 	if err != nil {
@@ -172,10 +187,10 @@ func (d douYin) parseVideoIDFromSlides(videoId string) (*VideoParseInfo, error) 
 		return nil, errors.New("slidesinfo: aweme_details empty")
 	}
 
-	return d.parseAwemeDetail(data)
+	return d.parseAwemeDetail(ctx, data)
 }
 
-func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
+func (d douYin) parseAwemeDetail(ctx context.Context, data gjson.Result) (*VideoParseInfo, error) {
 	// 获取图集图片地址
 	imageNodes := data.Get("images").Array()
 	if len(imageNodes) == 0 {
@@ -192,7 +207,7 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 		if len(imageUrl) > 0 {
 			livePhotoUrl := d.pickBestVideoUrl(imgItem.Get("video.play_addr.url_list").Array())
 			if livePhotoUrl != "" {
-				if resolved := d.resolveRedirect(livePhotoUrl); resolved != "" {
+				if resolved := d.resolveRedirect(ctx, livePhotoUrl); resolved != "" {
 					livePhotoUrl = resolved
 				}
 			}
@@ -217,7 +232,7 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 			videoUrl = d.pickBestVideoUrl(data.Get("video.bit_rate.0.play_addr.url_list").Array())
 		}
 		if videoUrl == "" && shortUrl != "" {
-			videoUrl = d.resolveRedirect(shortUrl)
+			videoUrl = d.resolveRedirect(ctx, shortUrl)
 		}
 		if videoUrl == "" {
 			videoUrl = data.Get("video.play_addr.url_list.0").String()
@@ -267,7 +282,7 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 
 	// 视频地址非空时，获取 302 重定向之后的视频地址
 	if len(videoInfo.VideoUrl) > 0 {
-		d.getRedirectUrl(videoInfo)
+		d.getRedirectUrl(ctx, videoInfo)
 	}
 
 	if videoInfo.VideoUrl == "" && len(videoInfo.Images) == 0 {
@@ -277,11 +292,11 @@ func (d douYin) parseAwemeDetail(data gjson.Result) (*VideoParseInfo, error) {
 	return videoInfo, nil
 }
 
-func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
+func (d douYin) parseVideoIDFromHTML(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := fmt.Sprintf("https://www.iesdouyin.com/share/video/%s", videoId)
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceDouYin)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1").
 		Get(reqUrl)
 	if err != nil {
@@ -292,6 +307,7 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	resBody := res.Body()
 	canonical, err := d.getCanonicalFromHTML(string(resBody))
 	if err == nil && canonical != "" {
+		// 判断字符串中是否有 /note/ 字符
 		if strings.Contains(canonical, "/note/") {
 			isNote = true
 		}
@@ -300,12 +316,13 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	var jsonBytes []byte
 	var data gjson.Result
 
+	// 获取图集
 	if isNote {
 		webId := "75" + d.generateFixedLengthNumericID(15)
 		aBogus := d.randSeq(64)
 
 		reqUrl = fmt.Sprintf("https://www.iesdouyin.com/web/api/v2/aweme/slidesinfo/?reflow_source=reflow_page&web_id=%s&device_id=%s&aweme_ids=%%5B%s%%5D&request_source=200&a_bogus=%s", webId, webId, videoId, aBogus)
-		res, err = client.R().
+		res, err = client.R().SetContext(ctx).
 			SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1").
 			Get(reqUrl)
 		if err != nil {
@@ -315,6 +332,7 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 		jsonBytes = res.Body()
 		data = gjson.GetBytes(jsonBytes, "aweme_details.0")
 		if !data.Exists() {
+			// 设置为 false，好让下面判断
 			isNote = false
 		}
 	}
@@ -335,12 +353,15 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 			jsonBytes,
 			fmt.Sprintf(`loaderData.video_(id)/page.videoInfoRes.filter_list.#(aweme_id=="%s")`, videoId),
 		)
+		if filterObj.Exists() {
+			return nil, fmt.Errorf(
+				"get video info fail: %s - %s",
+				filterObj.Get("filter_reason"),
+				filterObj.Get("detail_msg"),
+			)
+		}
 
-		return nil, fmt.Errorf(
-			"get video info fail: %s - %s",
-			filterObj.Get("filter_reason"),
-			filterObj.Get("detail_msg"),
-		)
+		return nil, errors.New("parse video json info from html fail")
 	}
 
 	// 获取图集图片地址
@@ -348,11 +369,12 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	images := make([]ImgInfo, 0, len(imagesObjArr))
 	for _, imageItem := range imagesObjArr {
 		urlList := imageItem.Get("url_list").Array()
+		// 优先获取非 .webp 格式的图片 url
 		imageUrl := d.getNoWebpUrl(urlList)
 		if len(imageUrl) > 0 {
 			livePhotoUrl := d.pickBestVideoUrl(imageItem.Get("video.play_addr.url_list").Array())
 			if livePhotoUrl != "" {
-				if resolved := d.resolveRedirect(livePhotoUrl); resolved != "" {
+				if resolved := d.resolveRedirect(ctx, livePhotoUrl); resolved != "" {
 					livePhotoUrl = resolved
 				}
 			}
@@ -366,6 +388,7 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	var videoUrl string
 	var shortUrl string
 	if !isNote {
+		// 获取视频播放地址
 		videoUrl = data.Get("video.play_addr.url_list.0").String()
 		videoUrl = strings.ReplaceAll(videoUrl, "playwm", "play")
 
@@ -375,7 +398,11 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 		}
 	}
 
+	// 获取音频地址（图集时，video.play_addr.uri 是音频地址；视频时不是音频）
 	musicUrl := data.Get("video.play_addr.uri").String()
+
+	// 如果图集地址不为空时，因为没有视频，上面抖音返回的视频地址无法访问，置空处理
+	// 图集时，musicUrl 是音频地址；视频时，musicUrl 不是音频，置空
 	if len(images) > 0 {
 		videoUrl = ""
 		shortUrl = ""
@@ -384,6 +411,7 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	}
 
 	urlList := data.Get("video.cover.url_list").Array()
+	// 优先获取非 .webp 格式的图片 url
 	coverUrl := d.getNoWebpUrl(urlList)
 
 	videoInfo := &VideoParseInfo{
@@ -398,8 +426,10 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	videoInfo.Author.Name = data.Get("author.nickname").String()
 	videoInfo.Author.Avatar = data.Get("author.avatar_thumb.url_list.0").String()
 
+	// 视频地址非空时，获取302重定向之后的视频地址
+	// 图集时，视频地址为空，不处理
 	if len(videoInfo.VideoUrl) > 0 {
-		d.getRedirectUrl(videoInfo)
+		d.getRedirectUrl(ctx, videoInfo)
 	}
 
 	if videoInfo.VideoUrl == "" && len(videoInfo.Images) == 0 {
@@ -409,33 +439,40 @@ func (d douYin) parseVideoIDFromHTML(videoId string) (*VideoParseInfo, error) {
 	return videoInfo, nil
 }
 
-func (d douYin) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (d douYin) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlRes, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, err
 	}
 
-	switch urlRes.Host {
+	switch httpHostname(urlRes) {
 	case "www.iesdouyin.com", "www.douyin.com", "iesdouyin.com", "douyin.com":
-		return d.parsePcShareUrl(shareUrl)
+		return d.parsePcShareUrl(ctx, shareUrl) // 解析电脑网页端链接
 	case "v.douyin.com":
-		return d.parseAppShareUrl(shareUrl)
+		return d.parseAppShareUrl(ctx, shareUrl) // 解析App分享链接
 	}
 
 	return nil, fmt.Errorf("douyin not support this host: %s", urlRes.Host)
 }
 
-func (d douYin) parseAppShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
+func (d douYin) parseAppShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	// 适配App分享链接类型:
+	// https://v.douyin.com/xxxxxx/
+
+	client := newClient(SourceDouYin)
+	// disable redirects in the HTTP client, get params before redirects
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
-	res, err := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(shareUrl)
+	if err == nil {
+		return nil, errShortLinkDidNotRedirect
+	}
 	if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
 		return nil, err
 	}
 
-	locationRes, err := res.RawResponse.Location()
+	locationRes, err := checkedLocation(SourceDouYin, res)
 	if err != nil {
 		return nil, err
 	}
@@ -453,19 +490,22 @@ func (d douYin) parseAppShareUrl(shareUrl string) (*VideoParseInfo, error) {
 	}
 
 	// 西瓜视频解析方式不一样
-	if strings.Contains(locationRes.Host, "ixigua.com") {
-		return xiGua{}.parseVideoID(videoId)
+	if hostMatches(httpHostname(locationRes), "ixigua.com") {
+		return xiGua{}.parseVideoID(ctx, videoId)
 	}
 
-	return d.parseVideoID(videoId)
+	return d.parseVideoID(ctx, videoId)
 }
 
-func (d douYin) parsePcShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (d douYin) parsePcShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	// 适配电脑网页端链接类型
+	// https://www.iesdouyin.com/share/video/xxxxxx/
+	// https://www.douyin.com/video/xxxxxx
 	videoId, err := d.parseVideoIdFromPath(shareUrl)
 	if err != nil {
 		return nil, err
 	}
-	return d.parseVideoID(videoId)
+	return d.parseVideoID(ctx, videoId)
 }
 
 func (d douYin) parseVideoIdFromPath(urlPath string) (string, error) {
@@ -478,16 +518,19 @@ func (d douYin) parseVideoIdFromPath(urlPath string) (string, error) {
 		return "", err
 	}
 
-	// 判断 modal_id 参数（如精选、发现等页面）
+	// 判断网页精选页面的视频
+	// https://www.douyin.com/jingxuan?modal_id=7555093909760789812
 	videoId := urlPathParse.Query().Get("modal_id")
 	if len(videoId) > 0 {
 		return videoId, nil
 	}
 
 	// 判断其他页面的视频/笔记
+	// https://www.iesdouyin.com/share/video/7424432820954598707/?region=CN&mid=7424432976273869622&u_code=0
 	urlPath = strings.Trim(urlPathParse.Path, "/")
 	urlSplit := strings.Split(urlPath, "/")
 
+	// 获取最后一个元素
 	if len(urlSplit) > 0 {
 		lastPart := urlSplit[len(urlSplit)-1]
 		if len(lastPart) > 0 {
@@ -542,32 +585,36 @@ func (d douYin) pickBestVideoUrl(urlList []gjson.Result) string {
 	return ""
 }
 
-func (d douYin) resolveRedirect(targetUrl string) string {
-	client := newClient()
+func (d douYin) resolveRedirect(ctx context.Context, targetUrl string) string {
+	client := newClient(SourceDouYin)
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
 	client.SetDoNotParseResponse(true)
-	res, _ := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		SetHeader("Range", "bytes=0-0").
 		Get(targetUrl)
-	if res != nil && res.RawResponse != nil {
-		defer res.RawResponse.Body.Close()
-		locationRes, _ := res.RawResponse.Location()
-		if locationRes != nil {
-			return locationRes.String()
-		}
+	if res != nil && res.RawResponse != nil && res.RawResponse.Body != nil {
+		defer func() {
+			_ = res.RawResponse.Body.Close()
+		}()
+	}
+	if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
+		return targetUrl
+	}
+	if locationRes, locErr := checkedLocation(SourceDouYin, res); locErr == nil && locationRes != nil {
+		return locationRes.String()
 	}
 	return targetUrl
 }
 
-func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
+func (d douYin) getRedirectUrl(ctx context.Context, videoInfo *VideoParseInfo) {
 	if videoInfo.VideoUrl == "" {
 		return
 	}
 
 	// 优先通过 short_url 跟踪获取底层高优节点（如 douyinvod.com）
 	if videoInfo.ShortUrl != "" {
-		resolved := d.resolveRedirect(videoInfo.ShortUrl)
+		resolved := d.resolveRedirect(ctx, videoInfo.ShortUrl)
 		if resolved != "" && !d.isHotlinkProtected(resolved) {
 			videoInfo.VideoUrl = resolved
 			return
@@ -584,7 +631,7 @@ func (d douYin) getRedirectUrl(videoInfo *VideoParseInfo) {
 		return
 	}
 
-	resolved := d.resolveRedirect(videoInfo.VideoUrl)
+	resolved := d.resolveRedirect(ctx, videoInfo.VideoUrl)
 	if resolved != "" {
 		videoInfo.VideoUrl = resolved
 	}
@@ -594,13 +641,15 @@ func (d douYin) randSeq(n int) string {
 	letters := []rune("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	b := make([]rune, n)
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[rand.Intn(len(letters))] // #nosec G404 -- Synthetic public slides API parameter, never used as a secret.
 	}
 	return string(b)
 }
 
+// 生成固定位数的随机数字（前导零）
 func (d douYin) generateFixedLengthNumericID(length int) string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// 创建一个新的随机数生成器源
+	r := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404 -- Synthetic public device ID, never used for authentication.
 
 	max2 := int64(1)
 	for i := 0; i < length; i++ {
@@ -611,11 +660,14 @@ func (d douYin) generateFixedLengthNumericID(length int) string {
 	return fmt.Sprintf("%0*d", length, randomNum)
 }
 
+// 优先获取非 .webp 格式的图片 url
 func (d douYin) getNoWebpUrl(urlList []gjson.Result) string {
 	var imageUrl string
+	// 手动遍历查找包含 .jpeg 或 .png 的 URL
 	found := false
 	for _, urllink := range urlList {
 		urlStr := urllink.String()
+		//if strings.Contains(urlStr, ".jpeg") || strings.Contains(urlStr, ".png") {
 		if !strings.Contains(urlStr, ".webp") {
 			imageUrl = urlStr
 			found = true
@@ -623,6 +675,7 @@ func (d douYin) getNoWebpUrl(urlList []gjson.Result) string {
 		}
 	}
 
+	// 如果没找到，使用第一项
 	if !found && len(urlList) > 0 {
 		imageUrl = urlList[0].String()
 	}
@@ -630,6 +683,7 @@ func (d douYin) getNoWebpUrl(urlList []gjson.Result) string {
 	return imageUrl
 }
 
+// 从 HTML 字符串获取 canonical URL
 func (d douYin) getCanonicalFromHTML(htmlContent string) (string, error) {
 	doc, err := html.Parse(strings.NewReader(htmlContent))
 	if err != nil {
@@ -639,6 +693,7 @@ func (d douYin) getCanonicalFromHTML(htmlContent string) (string, error) {
 	return d.findCanonical(doc), nil
 }
 
+// 递归查找 canonical link
 func (d douYin) findCanonical(n *html.Node) string {
 	if n.Type == html.ElementNode && n.Data == "link" {
 		var rel, href string
@@ -655,6 +710,7 @@ func (d douYin) findCanonical(n *html.Node) string {
 		}
 	}
 
+	// 递归遍历子节点
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if result := d.findCanonical(c); result != "" {
 			return result
@@ -664,8 +720,8 @@ func (d douYin) findCanonical(n *html.Node) string {
 	return ""
 }
 
-func (d douYin) parseVideoIDFromSEO(videoId string) (*VideoParseInfo, error) {
-	client := newClient()
+func (d douYin) parseVideoIDFromSEO(ctx context.Context, videoId string) (*VideoParseInfo, error) {
+	client := newClient(SourceDouYin)
 
 	urls := []string{
 		fmt.Sprintf("https://www.douyin.com/note/%s", videoId),
@@ -677,14 +733,14 @@ func (d douYin) parseVideoIDFromSEO(videoId string) (*VideoParseInfo, error) {
 	spiderUA := "Mozilla/5.0 (compatible; Baiduspider/2.0; +http://www.baidu.com/search/spider.html)"
 
 	for _, reqUrl := range urls {
-		res, err := client.R().
+		res, err := client.R().SetContext(ctx).
 			SetHeader(HttpHeaderUserAgent, spiderUA).
 			Get(reqUrl)
 		if err != nil {
 			continue
 		}
 
-		info, err := d.parseSEOHTML(res.Body(), videoId)
+		info, err := d.parseSEOHTML(res.Body())
 		if err == nil && info != nil {
 			return info, nil
 		}
@@ -693,7 +749,7 @@ func (d douYin) parseVideoIDFromSEO(videoId string) (*VideoParseInfo, error) {
 	return nil, errors.New("parse from seo failed")
 }
 
-func (d douYin) parseSEOHTML(htmlBytes []byte, videoId string) (*VideoParseInfo, error) {
+func (d douYin) parseSEOHTML(htmlBytes []byte) (*VideoParseInfo, error) {
 	htmlStr := string(htmlBytes)
 	reScript := regexp.MustCompile(`<script[^>]*type="application/ld\+json"[^>]*>([\s\S]*?)</script>`)
 	matches := reScript.FindAllStringSubmatch(htmlStr, -1)

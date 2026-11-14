@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -11,7 +12,7 @@ import (
 type douPai struct {
 }
 
-func (d douPai) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (d douPai) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlInfo, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, errors.New("parse share url fail")
@@ -20,17 +21,17 @@ func (d douPai) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		return nil, errors.New("can not parse video id from share url")
 	}
 
-	return d.parseVideoID(urlInfo.Query()["id"][0])
+	return d.parseVideoID(ctx, urlInfo.Query()["id"][0])
 }
 
-func (d douPai) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (d douPai) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := fmt.Sprintf("https://v2.doupai.cc/topic/%s.json", videoId)
 	headers := map[string]string{
 		HttpHeaderUserAgent: DefaultUserAgent,
 	}
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceDouPai)
+	res, err := client.R().SetContext(ctx).
 		SetHeaders(headers).
 		Get(reqUrl)
 	if err != nil {

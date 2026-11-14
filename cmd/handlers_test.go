@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -141,6 +144,35 @@ func TestMatchPlatformSubdomainHost(t *testing.T) {
 	}
 	if matchPlatform("https://notbilibili.com/video/123") {
 		t.Error("notbilibili.com 不应被识别为 bilibili 平台")
+	}
+}
+
+func TestParseURLHandlersRejectLoopbackWithPlatformInPath(t *testing.T) {
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`var videoInfo = {"title":"internal"};`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/parse", v1ParseURLHandler)
+	router.GET("/video/share/url/parse", legacyParseURLHandler)
+	query := "?url=" + url.QueryEscape(upstream.URL+"/www.acfun.cn")
+
+	legacy := httptest.NewRecorder()
+	router.ServeHTTP(legacy, httptest.NewRequest("GET", "/video/share/url/parse"+query, nil))
+	if legacy.Code != 200 || !strings.Contains(legacy.Body.String(), `"code":201`) {
+		t.Fatalf("legacy got HTTP %d, %s", legacy.Code, legacy.Body.String())
+	}
+	v1 := httptest.NewRecorder()
+	router.ServeHTTP(v1, httptest.NewRequest("GET", "/api/v1/parse"+query, nil))
+	if v1.Code != 400 || !containsJSONField(v1.Body.String(), "code", ErrUnsupportedURL) {
+		t.Fatalf("v1 got HTTP %d, %s", v1.Code, v1.Body.String())
+	}
+	if count := hits.Load(); count != 0 {
+		t.Fatalf("forbidden upstream got %d requests", count)
 	}
 }
 

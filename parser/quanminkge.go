@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"regexp"
@@ -12,7 +13,7 @@ import (
 type quanMinKGe struct {
 }
 
-func (q quanMinKGe) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (q quanMinKGe) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlInfo, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, errors.New("parse share url fail")
@@ -20,13 +21,13 @@ func (q quanMinKGe) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 	if len(urlInfo.Query()["s"]) <= 0 {
 		return nil, errors.New("can not parse video id from share url")
 	}
-	return q.parseVideoID(urlInfo.Query()["s"][0])
+	return q.parseVideoID(ctx, urlInfo.Query()["s"][0])
 }
 
-func (q quanMinKGe) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (q quanMinKGe) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := "https://kg.qq.com/node/play?s=" + videoId
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceQuanMinKGe)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.102 Safari/537.36 Edg/104.0.1293.70").
 		Get(reqUrl)
 	if err != nil {

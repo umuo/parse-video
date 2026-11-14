@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"net/url"
 
@@ -10,10 +11,10 @@ import (
 type weiShi struct {
 }
 
-func (w weiShi) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (w weiShi) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := "https://h5.weishi.qq.com/webapp/json/weishi/WSH5GetPlayPage?feedid=" + videoId
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceWeiShi)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(reqUrl)
 	if err != nil {
@@ -48,7 +49,7 @@ func (w weiShi) parseVideoID(videoId string) (*VideoParseInfo, error) {
 	return parseRes, nil
 }
 
-func (w weiShi) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (w weiShi) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlRes, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, err
@@ -59,5 +60,5 @@ func (w weiShi) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		return nil, errors.New("parse video_id from share url fail")
 	}
 
-	return w.parseVideoID(videoId)
+	return w.parseVideoID(ctx, videoId)
 }

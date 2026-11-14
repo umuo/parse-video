@@ -1,6 +1,10 @@
 package parser
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/tidwall/gjson"
@@ -41,7 +45,7 @@ func Test_douYin_parseIdFromPath(t *testing.T) {
 
 func Test_douYin_fetchTTWid(t *testing.T) {
 	d := douYin{}
-	ttwid, err := d.getTTWid()
+	ttwid, err := d.getTTWid(context.Background())
 	if err != nil {
 		t.Fatalf("getTTWid() failed: %v", err)
 	}
@@ -54,7 +58,7 @@ func Test_douYin_fetchTTWid(t *testing.T) {
 func Test_douYin_parseVideoID_Success(t *testing.T) {
 	d := douYin{}
 	videoId := "7677912809321008418"
-	info, err := d.parseVideoID(videoId)
+	info, err := d.parseVideoID(context.Background(), videoId)
 	if err != nil {
 		t.Fatalf("parseVideoID(%s) failed: %v", videoId, err)
 	}
@@ -80,7 +84,7 @@ func Test_douYin_parseVideoID_Success(t *testing.T) {
 func Test_douYin_parseShareUrl_Success(t *testing.T) {
 	d := douYin{}
 	shareUrl := "https://v.douyin.com/loqfe_AciR0/"
-	info, err := d.parseShareUrl(shareUrl)
+	info, err := d.parseShareUrl(context.Background(), shareUrl)
 	if err != nil {
 		t.Fatalf("parseShareUrl(%s) failed: %v", shareUrl, err)
 	}
@@ -118,7 +122,7 @@ func Test_douYin_parseNoteShareUrl_Success(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			info, err := d.parseShareUrl(tc.shareUrl)
+			info, err := d.parseShareUrl(context.Background(), tc.shareUrl)
 			if err != nil {
 				t.Fatalf("parseShareUrl(%s) failed: %v", tc.shareUrl, err)
 			}
@@ -142,7 +146,7 @@ func Test_douYin_parseNoteShareUrl_Success(t *testing.T) {
 func Test_douYin_parseNoteVideoID_Success(t *testing.T) {
 	d := douYin{}
 	videoId := "7109738393529109771"
-	info, err := d.parseVideoID(videoId)
+	info, err := d.parseVideoID(context.Background(), videoId)
 	if err != nil {
 		t.Fatalf("parseVideoID(%s) failed: %v", videoId, err)
 	}
@@ -159,7 +163,6 @@ func Test_douYin_parseNoteVideoID_Success(t *testing.T) {
 		t.Errorf("expected author '高清壁纸', got %s", info.Author.Name)
 	}
 }
-
 
 func Test_douYin_pickBestVideoUrl_AvoidV26(t *testing.T) {
 	d := douYin{}
@@ -197,4 +200,137 @@ func Test_douYin_pickBestVideoUrl_AvoidV26(t *testing.T) {
 	}
 }
 
+func Test_douYin_MergedFlow_WithMockProxy(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect {
+			http.Error(w, "no tls in mock proxy", http.StatusBadGateway)
+			return
+		}
+		switch {
+		case r.URL.Host == "www.iesdouyin.com" && r.URL.Path == "/aweme/v1/play/":
+			http.Redirect(w, r, "http://v99.douyinvod.com/resolved.mp4", http.StatusFound)
+		case r.URL.Host == "api-play.amemv.com" && r.URL.Path == "/livephoto":
+			http.Redirect(w, r, "http://v3.zjcdn.com/live.mp4", http.StatusFound)
+		case r.URL.Host == "www.iesdouyin.com" && r.URL.Path == "/evil":
+			http.Redirect(w, r, "http://evil.example.net/steal", http.StatusFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(proxy.Close)
+	t.Cleanup(resetProxy)
+	if err := InitProxy(proxy.URL); err != nil {
+		t.Fatalf("InitProxy() error = %v", err)
+	}
 
+	d := douYin{}
+	ctx := context.Background()
+
+	t.Run("outbound allowlist and checked redirect", func(t *testing.T) {
+		allowedTargets := []string{
+			"https://ttwid.bytedance.com/ttwid/union/register/",
+			"https://v11-default.365yg.com/def.mp4",
+			"https://v3.bytevcloud.com/a.mp4",
+			"https://douyin.com/video/123",
+			"https://iesdouyin.com/share/video/123",
+		}
+		for _, raw := range allowedTargets {
+			parsed, err := url.Parse(raw)
+			if err != nil {
+				t.Fatalf("url.Parse(%q) error = %v", raw, err)
+			}
+			if !outboundURLAllowed(SourceDouYin, parsed) {
+				t.Errorf("outboundURLAllowed(SourceDouYin, %q) = false, want true", raw)
+			}
+		}
+
+		got := d.resolveRedirect(ctx, "http://www.iesdouyin.com/aweme/v1/play/?video_id=vid123")
+		if got != "http://v99.douyinvod.com/resolved.mp4" {
+			t.Errorf("resolveRedirect(allowed) = %q, want %q", got, "http://v99.douyinvod.com/resolved.mp4")
+		}
+
+		evilTarget := "http://www.iesdouyin.com/evil"
+		if got := d.resolveRedirect(ctx, evilTarget); got != evilTarget {
+			t.Errorf("resolveRedirect(evil) = %q, want fallback %q", got, evilTarget)
+		}
+	})
+
+	t.Run("parseAwemeDetail video and livephoto", func(t *testing.T) {
+		videoDetail := gjson.Parse(`{
+			"desc": "slides title",
+			"author": {"sec_uid": "u1", "nickname": "author1"},
+			"video": {
+				"cover": {"url_list": ["http://p3.douyinpic.com/cover.jpeg"]},
+				"play_addr": {
+					"uri": "vid123",
+					"url_list": [
+						"http://v26-web.douyinvod.com/bad.mp4",
+						"http://v11-default.365yg.com/good.mp4"
+					]
+				}
+			}
+		}`)
+		info, err := d.parseAwemeDetail(ctx, videoDetail)
+		if err != nil {
+			t.Fatalf("parseAwemeDetail(video) error = %v", err)
+		}
+		if info.VideoUrl != "http://v11-default.365yg.com/good.mp4" {
+			t.Errorf("VideoUrl = %q, want %q", info.VideoUrl, "http://v11-default.365yg.com/good.mp4")
+		}
+		wantShort := "https://www.iesdouyin.com/aweme/v1/play/?video_id=vid123&ratio=1080p&line=0"
+		if info.ShortUrl != wantShort {
+			t.Errorf("ShortUrl = %q, want %q", info.ShortUrl, wantShort)
+		}
+		if info.CoverUrl != "http://p3.douyinpic.com/cover.jpeg" {
+			t.Errorf("CoverUrl = %q, want %q", info.CoverUrl, "http://p3.douyinpic.com/cover.jpeg")
+		}
+
+		noteDetail := gjson.Parse(`{
+			"desc": "note title",
+			"author": {"sec_uid": "u2", "nickname": "author2"},
+			"cover": {"url_list": ["http://p3.douyinpic.com/1.jpeg"]},
+			"images": [
+				{
+					"url_list": ["http://p3.douyinpic.com/1.webp", "http://p3.douyinpic.com/1.jpeg"],
+					"video": {"play_addr": {"url_list": ["http://api-play.amemv.com/livephoto"]}}
+				}
+			]
+		}`)
+		noteInfo, err := d.parseAwemeDetail(ctx, noteDetail)
+		if err != nil {
+			t.Fatalf("parseAwemeDetail(note) error = %v", err)
+		}
+		if len(noteInfo.Images) != 1 {
+			t.Fatalf("len(Images) = %d, want 1", len(noteInfo.Images))
+		}
+		if noteInfo.Images[0].Url != "http://p3.douyinpic.com/1.jpeg" {
+			t.Errorf("Images[0].Url = %q, want %q", noteInfo.Images[0].Url, "http://p3.douyinpic.com/1.jpeg")
+		}
+		if noteInfo.Images[0].LivePhotoUrl != "http://v3.zjcdn.com/live.mp4" {
+			t.Errorf("Images[0].LivePhotoUrl = %q, want %q", noteInfo.Images[0].LivePhotoUrl, "http://v3.zjcdn.com/live.mp4")
+		}
+		if noteInfo.VideoUrl != "" {
+			t.Errorf("note VideoUrl = %q, want empty", noteInfo.VideoUrl)
+		}
+		if noteInfo.ShortUrl != "" {
+			t.Errorf("note ShortUrl = %q, want empty", noteInfo.ShortUrl)
+		}
+	})
+
+	t.Run("parseSEOHTML fallback", func(t *testing.T) {
+		seoHTML := []byte(`<!doctype html><html><head><script type="application/ld+json">{"@context":"https://schema.org","headline":"壁纸合集","image":["https://p3.douyinpic.com/1.jpeg","https://p3.douyinpic.com/2.jpeg"],"author":{"name":"作者A","url":"https://www.douyin.com/user/MS4wLjAB"}}</script></head></html>`)
+		info, err := d.parseSEOHTML(seoHTML)
+		if err != nil {
+			t.Fatalf("parseSEOHTML() error = %v", err)
+		}
+		if info.Title != "壁纸合集" {
+			t.Errorf("Title = %q, want %q", info.Title, "壁纸合集")
+		}
+		if len(info.Images) != 2 {
+			t.Errorf("len(Images) = %d, want 2", len(info.Images))
+		}
+		if info.Author.Name != "作者A" || info.Author.Uid != "MS4wLjAB" {
+			t.Errorf("Author = %+v, want {Uid:MS4wLjAB Name:作者A}", info.Author)
+		}
+	})
+}

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,17 +18,17 @@ var qqVidPathRe = regexp.MustCompile(`/x/(?:page|cover)/(?:[^/]+/)?(\w+)\.html`)
 type qqVideo struct{}
 
 // parseShareUrl 根据分享链接解析腾讯视频信息
-func (q qqVideo) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (q qqVideo) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	vid, err := q.extractVid(shareUrl)
 	if err != nil {
 		return nil, fmt.Errorf("提取视频ID失败: %w", err)
 	}
 
-	return q.parseVideoID(vid)
+	return q.parseVideoID(ctx, vid)
 }
 
 // parseVideoID 根据视频ID解析腾讯视频信息
-func (q qqVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (q qqVideo) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	if len(videoId) == 0 {
 		return nil, errors.New("视频ID不能为空")
 	}
@@ -37,8 +38,8 @@ func (q qqVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
 		videoId,
 	)
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceQQVideo)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(apiUrl)
 	if err != nil {

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"context"
 	"regexp"
 
 	"github.com/PuerkitoBio/goquery"
@@ -10,9 +11,9 @@ import (
 type lvZhou struct {
 }
 
-func (l lvZhou) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
-	res, err := client.R().
+func (l lvZhou) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	client := newClient(SourceLvZhou)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(shareUrl)
 	if err != nil {
@@ -43,7 +44,7 @@ func (l lvZhou) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 	return parseRes, nil
 }
 
-func (l lvZhou) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (l lvZhou) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	shareUrl := "https://m.oasis.weibo.cn/v1/h5/share?sid=" + videoId
-	return l.parseShareUrl(shareUrl)
+	return l.parseShareUrl(ctx, shareUrl)
 }

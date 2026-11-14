@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -11,10 +12,10 @@ import (
 type piPiXia struct {
 }
 
-func (p piPiXia) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (p piPiXia) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := "https://api.pipix.com/bds/cell/cell_comment/?offset=0&cell_type=1&api_version=1&cell_id=" + videoId + "&ac=wifi&channel=huawei_1319_64&aid=1319&app_name=super"
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourcePiPiXia)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(reqUrl)
 	if err != nil {
@@ -64,19 +65,21 @@ func (p piPiXia) parseVideoID(videoId string) (*VideoParseInfo, error) {
 	return parseRes, nil
 }
 
-func (p piPiXia) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	client := newClient()
+func (p piPiXia) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	client := newClient(SourcePiPiXia)
 	// disable redirects in the HTTP client, get params before redirects
 	client.SetRedirectPolicy(resty.NoRedirectPolicy())
-	res, err := client.R().
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(shareUrl)
-	// 非 resty.ErrAutoRedirectDisabled 错误时，返回错误
+	if err == nil {
+		return nil, errShortLinkDidNotRedirect
+	}
 	if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
 		return nil, err
 	}
 
-	locationRes, err := res.RawResponse.Location()
+	locationRes, err := checkedLocation(SourcePiPiXia, res)
 	if err != nil {
 		return nil, err
 	}
@@ -86,5 +89,5 @@ func (p piPiXia) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		return nil, errors.New("parse video id from share url fail")
 	}
 
-	return p.parseVideoID(videoId)
+	return p.parseVideoID(ctx, videoId)
 }

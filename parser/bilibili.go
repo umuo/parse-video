@@ -1,7 +1,9 @@
 package parser
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -16,13 +18,13 @@ const UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 
 type biliBili struct{}
 
-func (b biliBili) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
-	bvid, err := b.getBvidFromURL(shareUrl)
+func (b biliBili) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
+	bvid, err := b.getBvidFromURL(ctx, shareUrl)
 	if err != nil {
 		return nil, fmt.Errorf("无法提取BVID: %w", err)
 	}
 	viewAPIURL := fmt.Sprintf("https://api.bilibili.com/x/web-interface/view?bvid=%s", bvid)
-	viewRespBytes, err := b.sendBiliRequest(viewAPIURL)
+	viewRespBytes, err := b.sendBiliRequest(ctx, viewAPIURL)
 	if err != nil {
 		return nil, fmt.Errorf("请求视频信息API失败: %w", err)
 	}
@@ -43,7 +45,7 @@ func (b biliBili) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 		bvid, firstPageCID,
 	)
 
-	playRespBytes, err := b.sendBiliRequest(playAPIURL)
+	playRespBytes, err := b.sendBiliRequest(ctx, playAPIURL)
 	if err != nil {
 		return nil, fmt.Errorf("请求播放链接API失败: %w", err)
 	}
@@ -114,31 +116,36 @@ type biliPlayURLResponse struct {
 	} `json:"data"`
 }
 
-func (b biliBili) getBvidFromURL(rawURL string) (string, error) {
+func (b biliBili) getBvidFromURL(ctx context.Context, rawURL string) (string, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return "", fmt.Errorf("URL格式无效")
 	}
 
-	if strings.Contains(parsedURL.Host, "b23.tv") {
-		client := newClient()
+	if hostMatches(httpHostname(parsedURL), "b23.tv") {
+		client := newClient(SourceBiliBili)
 		client.SetRedirectPolicy(resty.NoRedirectPolicy())
-		resp, _ := client.R().
-			SetHeader(HttpHeaderUserAgent, UserAgent).
-			Get(rawURL)
-
-		if resp == nil {
-			return "", fmt.Errorf("请求b23.tv短链失败: 无响应")
+		for hops := 0; hostMatches(httpHostname(parsedURL), "b23.tv"); hops++ {
+			if hops == maxRedirects {
+				return "", errors.New("b23.tv 短链重定向次数过多")
+			}
+			resp, err := client.R().SetContext(ctx).
+				SetHeader(HttpHeaderUserAgent, UserAgent).
+				Get(parsedURL.String())
+			if !errors.Is(err, resty.ErrAutoRedirectDisabled) {
+				if err == nil {
+					return "", errors.New("无法从 b23.tv 获取重定向链接")
+				}
+				return "", fmt.Errorf("请求 b23.tv 短链失败: %w", err)
+			}
+			parsedURL, err = checkedLocation(SourceBiliBili, resp)
+			if err != nil {
+				return "", err
+			}
 		}
-
-		location := resp.Header().Get("Location")
-		if location == "" {
-			return "", fmt.Errorf("无法从b23.tv获取重定向链接")
-		}
-		return b.getBvidFromURL(location)
 	}
 
-	if strings.Contains(parsedURL.Host, "bilibili.com") {
+	if hostMatches(httpHostname(parsedURL), "bilibili.com") {
 		path := strings.Trim(parsedURL.Path, "/")
 		parts := strings.Split(path, "/")
 		if len(parts) >= 2 && parts[0] == "video" {
@@ -151,9 +158,9 @@ func (b biliBili) getBvidFromURL(rawURL string) (string, error) {
 	return "", fmt.Errorf("不是有效的B站视频链接")
 }
 
-func (b biliBili) sendBiliRequest(apiURL string) ([]byte, error) {
-	client := newClient()
-	resp, err := client.R().
+func (b biliBili) sendBiliRequest(ctx context.Context, apiURL string) ([]byte, error) {
+	client := newClient(SourceBiliBili)
+	resp, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, UserAgent).
 		// 如需爬取更高清的视频请取消这里的注释
 		// SetHeader(HttpHeaderCookie, BiliCookie).

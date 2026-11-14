@@ -54,7 +54,7 @@ var idCmd = &cobra.Command{
 		download, _ := cmd.Flags().GetBool("download")
 		if download {
 			outputDir, _ := cmd.Flags().GetString("output-dir")
-			if err := downloadMedia(info, outputDir); err != nil {
+			if err := downloadMedia(cmd.Context(), info, outputDir); err != nil {
 				return err
 			}
 		}

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -20,17 +21,17 @@ var sohuUserVidRe = regexp.MustCompile(`/?us/\d+/(\d+)\.shtml`)
 type sohuVideo struct{}
 
 // parseShareUrl 根据分享链接解析搜狐视频信息
-func (s sohuVideo) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (s sohuVideo) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	vid, err := s.extractVid(shareUrl)
 	if err != nil {
 		return nil, fmt.Errorf("提取视频ID失败: %w", err)
 	}
 
-	return s.parseVideoID(vid)
+	return s.parseVideoID(ctx, vid)
 }
 
 // parseVideoID 根据视频ID解析搜狐视频信息
-func (s sohuVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (s sohuVideo) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	if len(videoId) == 0 {
 		return nil, errors.New("视频ID不能为空")
 	}
@@ -41,8 +42,8 @@ func (s sohuVideo) parseVideoID(videoId string) (*VideoParseInfo, error) {
 		videoId,
 	)
 
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceSohu)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(apiUrl)
 	if err != nil {

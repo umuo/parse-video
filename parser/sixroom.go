@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"net/url"
 	"strings"
@@ -11,7 +12,7 @@ import (
 type sixRoom struct {
 }
 
-func (s sixRoom) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (s sixRoom) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlInfo, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, errors.New("parse share url fail")
@@ -25,13 +26,13 @@ func (s sixRoom) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 	} else {
 		videoId = strings.ReplaceAll(urlInfo.Path, "/v/", "")
 	}
-	return s.parseVideoID(videoId)
+	return s.parseVideoID(ctx, videoId)
 }
 
-func (s sixRoom) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (s sixRoom) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := "https://v.6.cn/coop/mobile/index.php?padapi=minivideo-watchVideo.php&av=3.0&encpass=&logiuid=&isnew=1&from=0&vid=" + videoId
-	client := newClient()
-	videoRes, err := client.R().
+	client := newClient(SourceSixRoom)
+	videoRes, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderReferer, "https://m.6.cn/v/"+videoId).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(reqUrl)

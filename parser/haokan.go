@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"context"
 	"errors"
 	"net/url"
 
@@ -10,7 +11,7 @@ import (
 type haoKan struct {
 }
 
-func (h haoKan) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
+func (h haoKan) parseShareUrl(ctx context.Context, shareUrl string) (*VideoParseInfo, error) {
 	urlInfo, err := url.Parse(shareUrl)
 	if err != nil {
 		return nil, errors.New("parse share url fail")
@@ -18,13 +19,13 @@ func (h haoKan) parseShareUrl(shareUrl string) (*VideoParseInfo, error) {
 	if len(urlInfo.Query()["vid"]) <= 0 {
 		return nil, errors.New("can not parse video id from share url")
 	}
-	return h.parseVideoID(urlInfo.Query()["vid"][0])
+	return h.parseVideoID(ctx, urlInfo.Query()["vid"][0])
 }
 
-func (h haoKan) parseVideoID(videoId string) (*VideoParseInfo, error) {
+func (h haoKan) parseVideoID(ctx context.Context, videoId string) (*VideoParseInfo, error) {
 	reqUrl := "https://haokan.baidu.com/v?_format=json&vid=" + videoId
-	client := newClient()
-	res, err := client.R().
+	client := newClient(SourceHaoKan)
+	res, err := client.R().SetContext(ctx).
 		SetHeader(HttpHeaderUserAgent, DefaultUserAgent).
 		Get(reqUrl)
 	if err != nil {

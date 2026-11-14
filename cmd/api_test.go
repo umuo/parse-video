@@ -1,12 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/spf13/cobra"
 	"github.com/wujunwei928/parse-video/parser"
 )
 
@@ -21,10 +27,12 @@ func stubParserFuncs(t *testing.T,
 		parseVideoID = oldID
 	})
 	if share != nil {
-		parseVideoShareURL = share
+		parseVideoShareURL = func(_ context.Context, input string) (*parser.VideoParseInfo, error) { return share(input) }
 	}
 	if id != nil {
-		parseVideoID = id
+		parseVideoID = func(_ context.Context, source, input string) (*parser.VideoParseInfo, error) {
+			return id(source, input)
+		}
 	}
 }
 
@@ -58,6 +66,95 @@ func setupTestRouter(t *testing.T, auth bool) *gin.Engine {
 	r.GET("/video/id/parse", legacyParseIDHandler)
 	r.GET("/", func(c *gin.Context) { c.String(200, "web ui") })
 	return r
+}
+
+func TestParseErrorsHideUpstreamDetails(t *testing.T) {
+	const detail = "upstream returned https://example.invalid/video?sig=test-only-value"
+	stubParserFuncs(t,
+		func(string) (*parser.VideoParseInfo, error) { return nil, fmt.Errorf("%s", detail) },
+		func(string, string) (*parser.VideoParseInfo, error) { return nil, fmt.Errorf("%s", detail) },
+	)
+	router := setupTestRouter(t, false)
+	for _, test := range []struct {
+		path   string
+		status int
+		body   string
+	}{
+		{"/api/v1/parse?url=https://www.acfun.cn/video", 422, `"code":"PARSE_FAILED"`},
+		{"/api/v1/parse/acfun/123", 422, `"code":"PARSE_FAILED"`},
+		{"/video/share/url/parse?url=https://www.acfun.cn/video", 200, `"code":201`},
+		{"/video/id/parse?source=acfun&video_id=123", 200, `"code":201`},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest("GET", test.path, nil))
+		if w.Code != test.status || !strings.Contains(w.Body.String(), test.body) || strings.Contains(w.Body.String(), "test-only-value") {
+			t.Errorf("%s returned HTTP %d, %s", test.path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestParseCancelsUpstreamWhenClientDisconnects(t *testing.T) {
+	started := make(chan struct{})
+	upstreamCanceled := make(chan struct{})
+	release := make(chan struct{})
+	proxy := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		close(started)
+		select {
+		case <-req.Context().Done():
+			close(upstreamCanceled)
+		case <-release:
+		}
+	}))
+	defer proxy.Close()
+	if err := parser.InitProxy(proxy.URL); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = parser.InitProxy("") })
+	app := httptest.NewServer(setupTestRouter(t, false))
+	defer app.Close()
+	defer close(release)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, app.URL+"/api/v1/parse?url=http://www.acfun.cn/video", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientDone := make(chan error, 1)
+	go func() {
+		res, err := app.Client().Do(req)
+		if res != nil {
+			_ = res.Body.Close()
+		}
+		clientDone <- err
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("parse request never reached the upstream")
+	}
+	cancel()
+	select {
+	case <-upstreamCanceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream request was not canceled after the client disconnected")
+	}
+	if err := <-clientDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected client cancellation, got %v", err)
+	}
+}
+
+func TestRunServeRejectsPartialBasicAuth(t *testing.T) {
+	for _, values := range [][2]string{{"operator", ""}, {"", "placeholder"}} {
+		t.Setenv("PARSE_VIDEO_USERNAME", values[0])
+		t.Setenv("PARSE_VIDEO_PASSWORD", values[1])
+		command := &cobra.Command{}
+		command.Flags().String("port", "invalid", "")
+		err := runServe(command, nil)
+		if err == nil || !strings.Contains(err.Error(), "必须同时设置或同时留空") {
+			t.Fatalf("expected startup to reject partial credentials, got %v", err)
+		}
+	}
 }
 
 func assertVideoParseInfoFields(t *testing.T, data map[string]any) {

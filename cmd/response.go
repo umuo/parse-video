@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-resty/resty/v2"
 )
 
 const (
@@ -47,4 +50,17 @@ func sendError(c *gin.Context, httpStatus int, code string, message string) {
 // parser 包返回 error 接口无类型化错误，一律归类为解析失败
 func classifyParseError(err error) (int, string) {
 	return 422, ErrParseFailed
+}
+
+func parseErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "解析超时"
+	case errors.Is(err, context.Canceled):
+		return "解析请求已取消"
+	case errors.Is(err, resty.ErrResponseBodyTooLarge):
+		return "上游响应超出大小限制"
+	default:
+		return "解析失败，请确认链接或视频 ID 后重试"
+	}
 }
